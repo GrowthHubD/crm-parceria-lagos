@@ -3,10 +3,11 @@
 import { useState, useRef, useEffect } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { MoreVertical, Pencil, Trash2, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { NextFollowUpBadge, type NextFollowUpData } from "@/components/automations/next-followup-badge";
 
 interface Tag {
   id: string;
@@ -28,17 +29,27 @@ interface Lead {
   assigneeName: string | null;
   updatedAt: string;
   tags: Tag[];
+  nextFollowUp?: NextFollowUpData | null;
+  crmConversationId?: string | null;
+  contactProfilePicUrl?: string | null;
+  contactPushName?: string | null;
+  lastMessage?: {
+    preview: string;
+    direction: string;
+    timestamp: string;
+  } | null;
 }
 
 interface LeadCardProps {
   lead: Lead;
   onEdit: (lead: Lead) => void;
   onDelete: (id: string) => void;
+  onOpenConversation?: (conversationId: string) => void;
   canEdit: boolean;
   canDelete: boolean;
 }
 
-export function LeadCard({ lead, onEdit, onDelete, canEdit, canDelete }: LeadCardProps) {
+export function LeadCard({ lead, onEdit, onDelete, onOpenConversation, canEdit, canDelete }: LeadCardProps) {
   const {
     attributes,
     listeners,
@@ -85,12 +96,42 @@ export function LeadCard({ lead, onEdit, onDelete, canEdit, canDelete }: LeadCar
       )}
     >
       <div className="flex items-start gap-2">
+        {/* Avatar */}
+        <Avatar name={lead.name} picUrl={lead.contactProfilePicUrl} />
+
         {/* Content */}
         <div className="flex-1 min-w-0">
           {/* Name + company */}
           <p className="text-sm font-semibold text-foreground leading-tight truncate">{lead.name}</p>
           {lead.companyName && (
             <p className="text-xs text-muted mt-0.5 truncate">{lead.companyName}</p>
+          )}
+
+          {/* Preview da última mensagem — clique abre popup. Drag continua
+              funcionando porque o activationConstraint do PointerSensor (8px)
+              distingue click de drag. */}
+          {lead.lastMessage && (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (lead.crmConversationId && onOpenConversation) {
+                  onOpenConversation(lead.crmConversationId);
+                }
+              }}
+              className={cn(
+                "mt-1 w-full flex items-start gap-1.5 text-xs text-muted hover:text-foreground transition-colors",
+                lead.crmConversationId && onOpenConversation ? "cursor-pointer" : "cursor-default"
+              )}
+              title="Abrir conversa"
+            >
+              <MessageCircle className="w-3 h-3 shrink-0 mt-0.5 opacity-60" />
+              <span className="truncate flex-1">
+                {lead.lastMessage.direction === "outgoing" && <span className="opacity-60">Você: </span>}
+                {lead.lastMessage.preview}
+              </span>
+            </div>
           )}
 
           {/* Tag pill */}
@@ -114,6 +155,13 @@ export function LeadCard({ lead, onEdit, onDelete, canEdit, canDelete }: LeadCar
             <p className="text-sm font-bold text-primary mt-2">
               R$ {Number(lead.estimatedValue).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
             </p>
+          )}
+
+          {/* Próximo follow-up */}
+          {lead.nextFollowUp && (
+            <div className="mt-2">
+              <NextFollowUpBadge data={lead.nextFollowUp} variant="compact" />
+            </div>
           )}
 
           {/* Divider + meta */}
@@ -160,6 +208,33 @@ export function LeadCard({ lead, onEdit, onDelete, canEdit, canDelete }: LeadCar
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function Avatar({ name, picUrl }: { name: string; picUrl: string | null | undefined }) {
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase() ?? "")
+    .join("") || "?";
+
+  // contactProfilePicUrl pode ser: null, "none" (quando webhook não achou foto),
+  // ou uma URL http(s). Só renderiza como imagem se começar com http.
+  if (picUrl && picUrl.startsWith("http")) {
+    return (
+      <div
+        role="img"
+        aria-label={name}
+        className="w-9 h-9 rounded-full shrink-0 bg-surface-2 bg-cover bg-center"
+        style={{ backgroundImage: `url("${picUrl}")` }}
+      />
+    );
+  }
+  return (
+    <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-semibold shrink-0">
+      {initials}
     </div>
   );
 }

@@ -21,9 +21,27 @@ export const automation = pgTable("automation", {
   tenantId: uuid("tenant_id").notNull().references(() => tenant.id, { onDelete: "restrict" }),
   name: text("name").notNull(),
   description: text("description"),
-  triggerType: text("trigger_type").notNull(), // 'stage_enter' | 'tag_added' | 'manual'
-  triggerConfig: jsonb("trigger_config"), // ex: { stageId: "xxx" } ou { tagId: "xxx" }
+  // triggers: 'first_message' | 'lead_inactive' | 'stage_enter' | 'tag_added'
+  //         | 'manual' | 'manual_broadcast' | 'scheduled_once' | 'scheduled_recurring'
+  triggerType: text("trigger_type").notNull(),
+  // Config varia por trigger:
+  //  - lead_inactive: { inactiveDays: 3 }
+  //  - scheduled_once: { runAt: "2026-04-25T14:00:00Z" }
+  //  - scheduled_recurring: { frequency: "daily"|"weekly"|"monthly", hour, minute, weekday?, day? }
+  //  - stage_enter: { stageId }
+  //  - tag_added: { tagId }
+  triggerConfig: jsonb("trigger_config"),
+  // Filtro de leads (audiência) — usado por scheduled_* e manual_broadcast
+  // { pipelineId?, stageIds?[], tagIds?[], createdAfter?, createdBefore?,
+  //   inactiveMinDays?, includeUnread?, includeConversations?: boolean }
+  audienceFilter: jsonb("audience_filter"),
+  // Quando a automação rodou pela última vez (usado pra evitar re-rodar recorrentes no mesmo slot)
+  lastFiredAt: timestamp("last_fired_at", { withTimezone: true }),
   isActive: boolean("is_active").notNull().default(true),
+  // Quando true, só é visível pro scheduler rodando em AUTOMATION_DRY_RUN=true.
+  // Processos de produção (dev server ticker) ignoram essa automação — isolam
+  // testes E2E de disparos reais. Default false (produção normal).
+  dryRun: boolean("dry_run").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -45,6 +63,28 @@ export const automationStep = pgTable(
   ]
 );
 
+// Histórico de versões de cada step — criado automaticamente em toda edição
+export const automationStepVersion = pgTable(
+  "automation_step_version",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // stepId pode ficar null se o step for deletado (permite histórico sobreviver)
+    stepId: uuid("step_id").references(() => automationStep.id, { onDelete: "set null" }),
+    automationId: uuid("automation_id")
+      .notNull()
+      .references(() => automation.id, { onDelete: "cascade" }),
+    config: jsonb("config").notNull(), // snapshot do config antigo
+    stepType: text("step_type").notNull(),
+    note: text("note"), // opcional: descrição da mudança
+    createdBy: text("created_by"), // userId que salvou
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_step_version_automation").on(table.automationId, table.createdAt),
+    index("idx_step_version_step").on(table.stepId),
+  ]
+);
+
 export const automationLog = pgTable(
   "automation_log",
   {
@@ -54,10 +94,17 @@ export const automationLog = pgTable(
       .references(() => automation.id, { onDelete: "cascade" }),
     leadId: uuid("lead_id").references(() => lead.id, { onDelete: "set null" }),
     stepId: uuid("step_id").references(() => automationStep.id, { onDelete: "set null" }),
+    // Denormalizado de automation.triggerType pra permitir partial unique index
+    // (uq_autolog_welcome: 1 log por (automation, lead) quando trigger_type='first_message').
+    triggerType: text("trigger_type"),
     status: text("status").notNull().default("pending"), // 'pending' | 'sent' | 'failed' | 'skipped'
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
     executedAt: timestamp("executed_at", { withTimezone: true }),
     error: text("error"),
+    // Quando true, consumidor (runner) apenas simula o envio (grava crm_message
+    // + updates de timestamp mas SEM chamar WhatsApp). Inserido por processos em
+    // AUTOMATION_DRY_RUN=true pra isolar logs de teste de envios reais.
+    dryRun: boolean("dry_run").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

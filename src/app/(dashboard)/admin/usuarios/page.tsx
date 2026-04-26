@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { getServerSession } from "@/lib/auth-server";
 import { checkPermission } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { user, modulePermission } from "@/lib/db/schema/users";
@@ -12,7 +11,7 @@ import type { UserRole } from "@/types";
 export const metadata: Metadata = { title: "Admin — Usuários" };
 
 export default async function AdminUsuariosPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getServerSession();
   if (!session) redirect("/login");
 
   const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;

@@ -74,15 +74,18 @@ export async function POST(
 
     let conversationId: string;
 
+    const nowTs = new Date();
+
     if (existing[0]) {
       conversationId = existing[0].id;
       await db
         .update(crmConversation)
         .set({
-          lastMessageAt: new Date(),
+          lastMessageAt: nowTs,
+          lastIncomingAt: nowTs,
           unreadCount: existing[0].unreadCount + 1,
           contactPushName: pushName ?? existing[0].contactPushName,
-          updatedAt: new Date(),
+          updatedAt: nowTs,
         })
         .where(eq(crmConversation.id, conversationId));
     } else {
@@ -94,7 +97,9 @@ export async function POST(
           contactPhone,
           contactPushName: pushName,
           classification: "new",
-          lastMessageAt: new Date(),
+          isGroup: false,
+          lastMessageAt: nowTs,
+          lastIncomingAt: nowTs,
           unreadCount: 1,
         })
         .returning();

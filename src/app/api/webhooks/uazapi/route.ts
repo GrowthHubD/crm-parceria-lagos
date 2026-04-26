@@ -9,6 +9,17 @@ import { crmConversation, crmMessage, whatsappNumber } from "@/lib/db/schema/crm
 import { eq, and } from "drizzle-orm";
 import { extractPhone, extractContent } from "@/lib/uazapi";
 
+interface UazapiWebhookPayload {
+  event?: string;
+  session?: string;
+  data?: {
+    key?: { id?: string; remoteJid?: string; fromMe?: boolean };
+    message?: Record<string, unknown>;
+    messageTimestamp?: number;
+    pushName?: string;
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Validate webhook token — Uazapi sends the instance token in the Authorization header (raw, no Bearer prefix).
@@ -43,7 +54,7 @@ export async function POST(request: NextRequest) {
     }
 
     const contactPhone = extractPhone(remoteJid);
-    const { content, mediaType } = extractContent(payload);
+    const { content, mediaType } = extractContent(payload as unknown as Record<string, unknown>);
     const pushName = payload.data?.pushName ?? null;
 
     // Find the WhatsApp number by session
@@ -88,6 +99,7 @@ export async function POST(request: NextRequest) {
         .insert(crmConversation)
         .values({
           whatsappNumberId: wNum.id,
+          tenantId: wNum.tenantId,
           contactPhone,
           contactPushName: pushName,
           classification: "new",

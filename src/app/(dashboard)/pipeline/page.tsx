@@ -6,6 +6,7 @@ import { checkPermission } from "@/lib/permissions";
 import { getTenantContext } from "@/lib/tenant";
 import { db } from "@/lib/db";
 import { pipeline, pipelineStage, lead, leadTag, leadTagAssignment } from "@/lib/db/schema/pipeline";
+import { crmConversation } from "@/lib/db/schema/crm";
 import { user } from "@/lib/db/schema/users";
 import { eq, asc, desc, and } from "drizzle-orm";
 import { KanbanBoard } from "@/components/pipeline/kanban-board";
@@ -62,10 +63,14 @@ export default async function PipelinePage() {
         assignedTo: lead.assignedTo,
         assigneeName: user.name,
         updatedAt: lead.updatedAt,
+        // Para filtro compartilhado: classificação vem da conversa vinculada.
+        crmConversationId: lead.crmConversationId,
+        classification: crmConversation.classification,
       })
       .from(lead)
       .where(eq(lead.tenantId, tenantCtx.tenantId))
       .leftJoin(user, eq(lead.assignedTo, user.id))
+      .leftJoin(crmConversation, eq(lead.crmConversationId, crmConversation.id))
       .orderBy(desc(lead.createdAt)),
     db
       .select({

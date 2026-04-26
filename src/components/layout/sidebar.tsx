@@ -72,11 +72,18 @@ const SYSTEM_MODULES: NavItem[] = [
   { title: "Configurações", href: "/configuracoes", icon: SlidersHorizontal, module: "configuracoes" },
 ];
 
+// Módulos do parceiro revendedor (ex: Alexandre)
+const PARTNER_MODULES: NavItem[] = [
+  { title: "Meus Clientes", href: "/partner", icon: Users, module: "partner_clients" },
+  { title: "Métricas", href: "/partner/metricas", icon: LayoutDashboard, module: "partner_metrics" },
+];
+
 const ROLE_LABELS: Record<UserRole, string> = {
   partner: "Sócio",
   manager: "Gerente",
   operational: "Operacional",
   superadmin: "Super Admin",
+  partner_admin: "Parceiro",
   admin: "Administrador",
   operator: "Operador",
 };
@@ -104,6 +111,7 @@ export function Sidebar({
   const visibleAms = isPlatformOwner
     ? AMS_MODULES.filter((i) => allowedModules.includes(i.module))
     : [];
+  const visiblePartner = PARTNER_MODULES.filter((i) => allowedModules.includes(i.module));
   const visibleSystem = SYSTEM_MODULES.filter((i) => allowedModules.includes(i.module));
 
   const renderNavItem = (item: NavItem, idx: number) => {
@@ -201,12 +209,25 @@ export function Sidebar({
           </>
         )}
 
+        {/* Grupo Parceiro (revenda — Alexandre) */}
+        {visiblePartner.length > 0 && (
+          <>
+            {renderGroupLabel("Parceria")}
+            {visiblePartner.map((item, idx) =>
+              renderNavItem(item, visibleCrm.length + visibleAms.length + idx)
+            )}
+          </>
+        )}
+
         {/* Grupo Sistema */}
         {visibleSystem.length > 0 && (
           <>
             {renderGroupLabel("Sistema")}
             {visibleSystem.map((item, idx) =>
-              renderNavItem(item, visibleCrm.length + visibleAms.length + idx)
+              renderNavItem(
+                item,
+                visibleCrm.length + visibleAms.length + visiblePartner.length + idx
+              )
             )}
           </>
         )}

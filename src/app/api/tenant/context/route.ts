@@ -1,19 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTenantContext } from "@/lib/tenant";
+import { getTenantContext, getDevSession, DEV_TENANT_CONTEXT } from "@/lib/tenant";
 import { getUserModules } from "@/lib/permissions";
 import { auth } from "@/lib/auth";
+import { DEFAULT_PERMISSIONS } from "@/types";
 import type { UserRole } from "@/types";
+
+const isDev = process.env.NODE_ENV === "development";
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
+    let session = await auth.api.getSession({ headers: request.headers }).catch(() => null);
+
+    // Dev bypass
+    if (!session && isDev) {
+      session = await getDevSession();
+    }
+
     if (!session) {
       return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
     }
 
-    const tenantCtx = await getTenantContext(request.headers);
-    const userRole = tenantCtx.role as UserRole;
-    const modules = await getUserModules(tenantCtx.userId, userRole, tenantCtx);
+    let tenantCtx = DEV_TENANT_CONTEXT;
+    let modules = DEFAULT_PERMISSIONS["partner"].modules;
+
+    try {
+      tenantCtx = await getTenantContext(request.headers);
+      const userRole = tenantCtx.role as UserRole;
+      modules = await getUserModules(tenantCtx.userId, userRole, tenantCtx);
+    } catch {
+      if (!isDev) return NextResponse.json({ error: "NO_TENANT_ACCESS" }, { status: 403 });
+      // Em dev: usa mock + todos os módulos do partner
+    }
 
     return NextResponse.json({
       tenantId: tenantCtx.tenantId,

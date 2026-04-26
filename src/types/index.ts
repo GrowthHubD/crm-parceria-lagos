@@ -5,8 +5,12 @@
 // Roles legados AMS (mantidos para backward compat)
 export type LegacyRole = "partner" | "manager" | "operational";
 
-// Roles multi-tenant
-export type TenantRole = "superadmin" | "admin" | "operator";
+// Roles multi-tenant (SaaS 3-níveis)
+// - superadmin: GH, vê/gerencia tudo
+// - partner_admin: parceiro (revenda), gerencia seus clientes
+// - admin: dono do cliente final
+// - operator: atendente do cliente final
+export type TenantRole = "superadmin" | "partner_admin" | "admin" | "operator";
 
 export type UserRole = LegacyRole | TenantRole;
 
@@ -35,9 +39,11 @@ export type SystemModule =
   | "admin"
   | "agenda"
   | "configuracoes"
-  | "automations"  // CRM Lagos: sequências de follow-up
-  | "tasks"        // CRM Lagos: tarefas vinculadas a lead
-  | "tenants";     // Superadmin: gestão de tenants
+  | "automations"       // CRM Lagos: sequências de follow-up
+  | "tasks"             // CRM Lagos: tarefas vinculadas a lead
+  | "tenants"           // Superadmin: gestão de tenants
+  | "partner_clients"   // partner_admin: lista + criação de clientes
+  | "partner_metrics";  // partner_admin: métricas agregadas dos clientes
 
 // Módulos exclusivos do tenant GH (is_platform_owner)
 export const AMS_ONLY_MODULES: SystemModule[] = [
@@ -51,6 +57,9 @@ export const AMS_ONLY_MODULES: SystemModule[] = [
 
 // Módulos exclusivos do superadmin
 export const SUPERADMIN_ONLY_MODULES: SystemModule[] = ["tenants"];
+
+// Módulos exclusivos do partner_admin
+export const PARTNER_ONLY_MODULES: SystemModule[] = ["partner_clients", "partner_metrics"];
 
 export type PermissionAction = "view" | "edit" | "delete";
 
@@ -123,6 +132,8 @@ export const DEFAULT_PERMISSIONS: Record<
       "configuracoes",
       "automations",
       "tasks",
+      "partner_clients",
+      "partner_metrics",
     ],
     canEdit: true,
     canDelete: true,
@@ -168,6 +179,8 @@ export const DEFAULT_PERMISSIONS: Record<
       "automations",
       "tasks",
       "tenants",
+      "partner_clients",
+      "partner_metrics",
     ],
     canEdit: true,
     canDelete: true,
@@ -191,5 +204,17 @@ export const DEFAULT_PERMISSIONS: Record<
     modules: ["dashboard", "pipeline", "crm", "kanban", "agenda", "tasks"],
     canEdit: true,
     canDelete: false,
+  },
+
+  // --- SaaS: parceiro revendedor ---
+  partner_admin: {
+    modules: [
+      "dashboard",
+      "partner_clients",
+      "partner_metrics",
+      "configuracoes",
+    ],
+    canEdit: true,
+    canDelete: true,
   },
 };

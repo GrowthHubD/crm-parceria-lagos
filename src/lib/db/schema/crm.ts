@@ -22,11 +22,29 @@ export const whatsappNumber = pgTable("whatsapp_number", {
   tenantId: uuid("tenant_id").notNull().references(() => tenant.id, { onDelete: "restrict" }),
   phoneNumber: text("phone_number").notNull().unique(),
   label: text("label").notNull(),
-  uazapiSession: text("uazapi_session").notNull(),
-  uazapiToken: text("uazapi_token").notNull(), // Should be encrypted at rest
+  // Baileys auth — session state armazenado em baileys_auth_state
+  uazapiSession: text("uazapi_session").notNull().default("baileys"), // legacy compat
+  uazapiToken: text("uazapi_token").notNull().default("baileys"),     // legacy compat
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const baileysAuthState = pgTable(
+  "baileys_auth_state",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    whatsappNumberId: uuid("whatsapp_number_id")
+      .notNull()
+      .references(() => whatsappNumber.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),       // 'creds' ou 'app-state-sync-key-xxx', 'pre-key-xxx', etc.
+    value: text("value").notNull(),   // JSON serializado com BufferJSON
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("uq_baileys_auth_key").on(table.whatsappNumberId, table.key),
+    index("idx_baileys_auth_wn").on(table.whatsappNumberId),
+  ]
+);
 
 export const crmConversation = pgTable(
   "crm_conversation",
@@ -37,11 +55,17 @@ export const crmConversation = pgTable(
       .notNull()
       .references(() => whatsappNumber.id),
     contactPhone: text("contact_phone").notNull(),
+    contactJid: text("contact_jid"),
     contactName: text("contact_name"),
     contactPushName: text("contact_push_name"),
     classification: text("classification").notNull().default("new"), // 'hot', 'warm', 'cold', 'active_client', 'new'
+    isGroup: boolean("is_group").notNull().default(false),
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    lastIncomingAt: timestamp("last_incoming_at", { withTimezone: true }),
+    lastOutgoingAt: timestamp("last_outgoing_at", { withTimezone: true }),
     unreadCount: integer("unread_count").notNull().default(0),
+    contactProfilePicUrl: text("contact_profile_pic_url"),
+    contactAlias: text("contact_alias"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -64,6 +88,10 @@ export const crmMessage = pgTable(
     mediaType: text("media_type"), // 'text', 'image', 'audio', 'video', 'document'
     mediaUrl: text("media_url"),
     status: text("status").default("sent"), // 'sent', 'delivered', 'read', 'failed'
+    quotedMessageId: text("quoted_message_id"),
+    quotedContent: text("quoted_content"),
+    senderName: text("sender_name"), // for group messages: display name of sender
+    isStarred: boolean("is_starred").notNull().default(false),
     timestamp: timestamp("timestamp", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

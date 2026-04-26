@@ -7,6 +7,8 @@ import { DashboardShell } from "@/components/layout/dashboard-shell";
 import { Loader2 } from "lucide-react";
 import type { SystemModule, UserRole } from "@/types";
 
+const isDev = process.env.NODE_ENV === "development";
+
 interface TenantContext {
   isPlatformOwner: boolean;
   tenantSlug: string;
@@ -25,14 +27,16 @@ export default function DashboardLayout({
   const router = useRouter();
   const [tenantCtx, setTenantCtx] = useState<TenantContext | null>(null);
 
+  // Redirecionar pro login apenas em produção
   useEffect(() => {
-    if (!isPending && !session) {
+    if (!isPending && !session && !isDev) {
       router.push("/login");
     }
   }, [session, isPending, router]);
 
+  // Buscar tenant context — funciona sem sessão em dev (API faz fallback)
   useEffect(() => {
-    if (!session) return;
+    if (!session && !isDev) return;
 
     fetch("/api/tenant/context")
       .then((res) => {
@@ -40,10 +44,12 @@ export default function DashboardLayout({
         return res.json();
       })
       .then(setTenantCtx)
-      .catch(() => router.push("/login"));
+      .catch(() => {
+        if (!isDev) router.push("/login");
+      });
   }, [session, router]);
 
-  if (isPending || !tenantCtx) {
+  if ((isPending && !isDev) || !tenantCtx) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3 animate-fade-in">
@@ -53,8 +59,6 @@ export default function DashboardLayout({
       </div>
     );
   }
-
-  if (!session) return null;
 
   return (
     <DashboardShell

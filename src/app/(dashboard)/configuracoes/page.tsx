@@ -5,6 +5,7 @@ import { User, Phone, Calendar, CheckCircle2, XCircle, Loader2, Pencil, Unlink, 
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/auth-client";
+import { WhatsAppConnect } from "@/components/crm/whatsapp-connect";
 
 interface UserProfile {
   id: string;
@@ -282,6 +283,9 @@ export default function ConfiguracoesPage() {
           </div>
         )}
       </section>
+
+      {/* ── WhatsApp Connection ── */}
+      <WhatsAppConnect />
 
       {/* ── Google Calendar ── */}
       <section className="bg-surface rounded-xl border border-border p-6">

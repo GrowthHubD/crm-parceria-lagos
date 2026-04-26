@@ -1,7 +1,7 @@
 import { eq, and } from "drizzle-orm";
 import { auth } from "./auth";
 import { db } from "./db";
-import { userTenant } from "./db/schema/users";
+import { user, userTenant } from "./db/schema/users";
 import { tenant } from "./db/schema/tenants";
 import type { ReadonlyHeaders } from "next/dist/server/web/spec-extension/adapters/headers";
 
@@ -13,6 +13,52 @@ export interface TenantContext {
   userId: string;
 }
 
+const isDev = process.env.NODE_ENV === "development";
+
+/**
+ * Retorna o primeiro superadmin do banco para uso em dev mode.
+ * Se o banco estiver vazio, retorna um mock hardcoded.
+ */
+export async function getDevSession(): Promise<{
+  user: { id: string; name: string; email: string; role: string; image?: string | null };
+} | null> {
+  if (!isDev) return null;
+
+  try {
+    const [row] = await db
+      .select({ id: user.id, name: user.name, email: user.email, role: user.role, image: user.image })
+      .from(user)
+      .where(eq(user.role, "partner"))
+      .limit(1);
+
+    if (row) return { user: row };
+  } catch {
+    // DB indisponível — cai no mock abaixo
+  }
+
+  // Mock hardcoded para dev sem banco
+  return {
+    user: {
+      id: "dev-user-id",
+      name: "Dev User",
+      email: "dev@localhost",
+      role: "partner",
+      image: null,
+    },
+  };
+}
+
+/**
+ * Contexto de tenant mockado para dev sem banco configurado.
+ */
+export const DEV_TENANT_CONTEXT: TenantContext = {
+  tenantId: "dev-tenant-id",
+  tenantSlug: "gh",
+  isPlatformOwner: true,
+  role: "partner",
+  userId: "dev-user-id",
+};
+
 /**
  * Extrai o tenant context da request.
  *
@@ -20,12 +66,20 @@ export interface TenantContext {
  * 1. Header X-Tenant-Id (superadmin cross-tenant override)
  * 2. Tenant padrão do user (isDefault = true em user_tenant)
  *
+ * Em dev mode: se não houver sessão, usa o superadmin automaticamente.
  * Lança erro se não houver sessão ou tenant válido.
  */
 export async function getTenantContext(
   headers: ReadonlyHeaders
 ): Promise<TenantContext> {
-  const session = await auth.api.getSession({ headers });
+  let session = await auth.api.getSession({ headers }).catch(() => null);
+
+  // Dev bypass: usar superadmin quando sem sessão
+  if (!session && isDev) {
+    const dev = await getDevSession();
+    session = dev as unknown as typeof session;
+  }
+
   if (!session) throw new Error("UNAUTHENTICATED");
 
   const tenantOverride = headers.get("x-tenant-id");
@@ -52,7 +106,10 @@ export async function getTenantContext(
     )
     .limit(1);
 
-  if (!row) throw new Error("NO_TENANT_ACCESS");
+  if (!row) {
+    if (isDev) return { ...DEV_TENANT_CONTEXT, userId: session.user.id };
+    throw new Error("NO_TENANT_ACCESS");
+  }
 
   return {
     tenantId: row.tenantId,

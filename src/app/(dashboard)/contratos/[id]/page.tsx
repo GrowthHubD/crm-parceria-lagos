@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
+import { getServerSession } from "@/lib/auth-server";
 import {
   FileText, ChevronRight, DollarSign, Calendar,
   AlertTriangle, Building2, ExternalLink,
 } from "lucide-react";
-import { auth } from "@/lib/auth";
 import { checkPermission } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { contract } from "@/lib/db/schema/contracts";
@@ -32,7 +31,7 @@ export default async function ContratoDetailPage({
 }) {
   const { id } = await params;
 
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getServerSession();
   if (!session) redirect("/login");
 
   const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;

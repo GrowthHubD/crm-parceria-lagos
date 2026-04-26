@@ -1,5 +1,5 @@
-import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
 
 import * as tenants from "./schema/tenants";
 import * as users from "./schema/users";
@@ -37,8 +37,14 @@ let _db: DbInstance | null = null;
 
 function getDb(): DbInstance {
   if (!_db) {
-    const sql = neon(process.env.DATABASE_URL!);
-    _db = drizzle({ client: sql, schema });
+    const client = postgres(process.env.DATABASE_URL!, {
+      prepare: false, // exigido pelo Supabase transaction pooler (6543)
+      max: 20, // dashboard AMS faz ~20 queries paralelas
+      idle_timeout: 20,
+      connect_timeout: 15,
+      max_lifetime: 60 * 30, // 30min — evita conexões zumbis
+    });
+    _db = drizzle(client, { schema });
   }
   return _db;
 }

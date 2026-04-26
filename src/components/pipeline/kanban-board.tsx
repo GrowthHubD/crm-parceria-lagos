@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -9,16 +9,19 @@ import {
   useSensors,
   type DragStartEvent,
   type DragEndEvent,
-  type DragOverEvent,
 } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { Plus, Tags, Columns, X, Trophy } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Select } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
 import { KanbanColumn } from "./kanban-column";
 import { LeadCard } from "./lead-card";
 import { LeadModal } from "./lead-modal";
+import { ConversationPopup } from "./conversation-popup";
+import {
+  LeadFilters,
+  useLeadFiltersFromUrl,
+} from "@/components/shared/lead-filters";
 
 interface Tag {
   id: string;
@@ -40,6 +43,21 @@ interface Lead {
   assigneeName: string | null;
   updatedAt: string;
   tags: Tag[];
+  nextFollowUp?: {
+    automationId: string;
+    automationName: string;
+    scheduledAt: string;
+    status: "pending" | "upcoming";
+  } | null;
+  crmConversationId?: string | null;
+  classification?: string | null;
+  contactProfilePicUrl?: string | null;
+  contactPushName?: string | null;
+  lastMessage?: {
+    preview: string;
+    direction: string;
+    timestamp: string;
+  } | null;
 }
 
 interface Stage {
@@ -290,17 +308,26 @@ export function KanbanBoard({
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [openedConvId, setOpenedConvId] = useState<string | null>(null);
   const [defaultStageId, setDefaultStageId] = useState<string>("");
-  const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
+  // Filtros compartilhados (URL): tag, stage, classification, pipeline.
+  // O picker de funil dedicado fica no header (mantém UX existente);
+  // o LeadFilters mostra tag + stage + classification.
+  const filters = useLeadFiltersFromUrl();
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [newStageOpen, setNewStageOpen] = useState(false);
   const wonStageId = stages.find((s) => s.isWon)?.id ?? "";
+  const isDragging = useRef(false);
+
+  // Polling DESATIVADO enquanto estabilizamos o drag. Race entre polling e
+  // PATCH causava snap-back. Pra reativar no futuro: adicionar cache:no-store
+  // + janela de graça de 10s+ após PATCH antes de aceitar setLeads do polling.
 
   // Trocar de funil — refetch dados
   const handleSwitchFunnel = useCallback(async (pipelineId: string) => {
     setActivePipelineId(pipelineId);
     try {
-      const res = await fetch(`/api/pipeline?pipelineId=${pipelineId}`);
+      const res = await fetch(`/api/pipeline?pipelineId=${pipelineId}`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         setStages(data.stages);
@@ -326,42 +353,57 @@ export function KanbanBoard({
 
   // ─── Filtering ─────────────────────────────────────────────────────────────
 
-  const filteredLeads = activeTagFilter
-    ? leads.filter((l) => l.tags.some((t) => t.name === activeTagFilter))
-    : leads;
+  // Memoiza arrays filtrados pra dnd-kit não re-registrar SortableContext em
+  // cada render (polling de 5s dispararia re-registro constante → drag quebra).
+  const filteredLeads = useMemo(() => {
+    let out = leads;
+    if (filters.tagId) {
+      out = out.filter((l) => l.tags.some((t) => t.id === filters.tagId));
+    }
+    if (filters.stageId) {
+      out = out.filter((l) => l.stageId === filters.stageId);
+    }
+    if (filters.classification) {
+      out = out.filter((l) => l.classification === filters.classification);
+    }
+    return out;
+  }, [leads, filters.tagId, filters.stageId, filters.classification]);
 
-  const getLeadsForStage = (stageId: string) =>
-    filteredLeads.filter((l) => l.stageId === stageId);
+  const leadsByStage = useMemo(() => {
+    const m = new Map<string, Lead[]>();
+    for (const l of filteredLeads) {
+      const arr = m.get(l.stageId) ?? [];
+      arr.push(l);
+      m.set(l.stageId, arr);
+    }
+    return m;
+  }, [filteredLeads]);
 
-  // ─── Drag handlers ─────────────────────────────────────────────────────────
+  const getLeadsForStage = useCallback(
+    (stageId: string) => leadsByStage.get(stageId) ?? [],
+    [leadsByStage]
+  );
+
+  // ─── Drag handlers (simplificado) ──────────────────────────────────────────
+  //
+  // Uma única fonte de mutação: handleDragEnd. Não mexemos em `leads` durante
+  // o drag (handleDragOver removido); o feedback visual é o DragOverlay
+  // (ghost card flutuando). Isso elimina toda a classe de bugs de estado
+  // inconsistente meio-drag.
 
   const handleDragStart = ({ active }: DragStartEvent) => {
+    isDragging.current = true;
     const lead = leads.find((l) => l.id === active.id);
     if (lead) setActiveLead(lead);
   };
 
-  const handleDragOver = ({ active, over }: DragOverEvent) => {
-    if (!over) return;
-    const activeId = String(active.id);
-    const overId = String(over.id);
-
-    const overStage = stages.find((s) => s.id === overId);
-    if (overStage) {
-      setLeads((prev) =>
-        prev.map((l) => (l.id === activeId ? { ...l, stageId: overStage.id } : l))
-      );
-      return;
-    }
-
-    const overLead = leads.find((l) => l.id === overId);
-    if (overLead && overLead.stageId !== leads.find((l) => l.id === activeId)?.stageId) {
-      setLeads((prev) =>
-        prev.map((l) => (l.id === activeId ? { ...l, stageId: overLead.stageId } : l))
-      );
-    }
+  const handleDragCancel = () => {
+    isDragging.current = false;
+    setActiveLead(null);
   };
 
   const handleDragEnd = async ({ active, over }: DragEndEvent) => {
+    isDragging.current = false;
     setActiveLead(null);
     if (!over) return;
 
@@ -370,30 +412,48 @@ export function KanbanBoard({
 
     const movedLead = leads.find((l) => l.id === activeId);
     if (!movedLead) return;
+    const startStage = movedLead.stageId;
 
+    // Determina stage de destino: droppable pode ser uma coluna (stage) ou
+    // outro lead (pega o stage dele).
+    const overStage = stages.find((s) => s.id === overId);
     const overLead = leads.find((l) => l.id === overId);
-    if (overLead && overLead.stageId === movedLead.stageId) {
-      const stageLeads = getLeadsForStage(movedLead.stageId);
-      const oldIndex = stageLeads.findIndex((l) => l.id === activeId);
-      const newIndex = stageLeads.findIndex((l) => l.id === overId);
-      if (oldIndex !== newIndex) {
-        const reordered = arrayMove(stageLeads, oldIndex, newIndex);
-        setLeads((prev) => {
-          const others = prev.filter((l) => l.stageId !== movedLead.stageId);
-          return [...others, ...reordered];
-        });
+    const targetStageId = overStage?.id ?? overLead?.stageId ?? startStage;
+
+    // Mesma coluna → reorder ou no-op
+    if (targetStageId === startStage) {
+      if (overLead && overLead.id !== activeId) {
+        const stageLeads = getLeadsForStage(startStage);
+        const oldIndex = stageLeads.findIndex((l) => l.id === activeId);
+        const newIndex = stageLeads.findIndex((l) => l.id === overId);
+        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+          const reordered = arrayMove(stageLeads, oldIndex, newIndex);
+          setLeads((prev) => {
+            const others = prev.filter((l) => l.stageId !== startStage);
+            return [...others, ...reordered];
+          });
+        }
       }
       return;
     }
 
+    // Mudou de coluna → otimista local + PATCH. Se falhar, reverte.
+    setLeads((prev) =>
+      prev.map((l) => (l.id === activeId ? { ...l, stageId: targetStageId } : l))
+    );
     try {
-      await fetch(`/api/pipeline/leads/${activeId}`, {
+      const res = await fetch(`/api/pipeline/leads/${activeId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stageId: movedLead.stageId }),
+        body: JSON.stringify({ stageId: targetStageId }),
+        cache: "no-store",
       });
+      if (!res.ok) throw new Error(`PATCH failed ${res.status}`);
     } catch {
-      setLeads(initialLeads);
+      // Reverte optimistic update
+      setLeads((prev) =>
+        prev.map((l) => (l.id === activeId ? { ...l, stageId: startStage } : l))
+      );
     }
   };
 
@@ -503,49 +563,22 @@ export function KanbanBoard({
         )}
       </div>
 
-      {/* ── Filter bar ── */}
-      {allTags.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap mb-5 p-3 bg-surface rounded-xl border border-border">
-          <span className="text-xs font-medium text-muted uppercase tracking-wide mr-1">Filtros:</span>
-          <button
-            onClick={() => setActiveTagFilter(null)}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer",
-              activeTagFilter === null
-                ? "bg-primary text-white"
-                : "text-muted hover:text-foreground"
-            )}
-          >
-            Todos os grupos
-          </button>
-          {allTags.map((tag) => (
-            <button
-              key={tag.id}
-              onClick={() => setActiveTagFilter(activeTagFilter === tag.name ? null : tag.name)}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all cursor-pointer",
-                activeTagFilter === tag.name
-                  ? "text-white"
-                  : "text-muted hover:text-foreground"
-              )}
-              style={activeTagFilter === tag.name ? { backgroundColor: tag.color } : {}}
-            >
-              <span
-                className="w-1.5 h-1.5 rounded-full shrink-0"
-                style={{ backgroundColor: activeTagFilter === tag.name ? "white" : tag.color }}
-              />
-              {tag.name}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* ── Filter bar (compartilhado com /crm) ── */}
+      <div className="mb-5">
+        <LeadFilters
+          tags={allTags}
+          stages={stages.map((s) => ({ id: s.id, name: s.name, color: s.color }))}
+          // Funil é selecionado no header dedicado; aqui escondemos pra evitar duplicação.
+          show={{ tags: true, stages: true, classification: true, funnel: false }}
+        />
+      </div>
 
       {/* ── Board — horizontal scroll ── */}
       <DndContext
         sensors={sensors}
         onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
       >
         <div className="overflow-x-auto pb-4 -mx-2 px-2">
           <div className="flex gap-3 min-w-max">
@@ -557,6 +590,7 @@ export function KanbanBoard({
                 onAddLead={handleAddLead}
                 onEditLead={handleEditLead}
                 onDeleteLead={handleDeleteLead}
+                onOpenConversation={(id) => setOpenedConvId(id)}
                 canEdit={canEdit}
                 canDelete={canDelete}
               />
@@ -629,6 +663,14 @@ export function KanbanBoard({
         onConfirm={confirmLeadDelete}
         onCancel={() => setPendingLeadDelete(null)}
       />
+
+      {openedConvId && (
+        <ConversationPopup
+          conversationId={openedConvId}
+          canEdit={canEdit}
+          onClose={() => setOpenedConvId(null)}
+        />
+      )}
     </>
   );
 }

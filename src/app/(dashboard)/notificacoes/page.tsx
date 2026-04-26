@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { getServerSession } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { notification } from "@/lib/db/schema/notifications";
 import { eq, desc } from "drizzle-orm";
@@ -10,7 +9,7 @@ import { NotificationList } from "@/components/notificacoes/notification-list";
 export const metadata: Metadata = { title: "Notificações" };
 
 export default async function NotificacoesPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getServerSession();
   if (!session) redirect("/login");
 
   const notifications = await db

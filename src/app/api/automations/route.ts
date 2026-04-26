@@ -7,11 +7,35 @@ import { automation, automationStep } from "@/lib/db/schema/automations";
 import { eq, asc, desc } from "drizzle-orm";
 import type { UserRole } from "@/types";
 
+const audienceFilterSchema = z
+  .object({
+    pipelineId: z.string().uuid().optional(),
+    stageIds: z.array(z.string().uuid()).optional(),
+    tagIds: z.array(z.string().uuid()).optional(),
+    createdAfter: z.string().datetime().optional(),
+    createdBefore: z.string().datetime().optional(),
+    inactiveMinDays: z.number().int().min(0).optional(),
+    // true = só quem NÃO respondeu (incoming mais velho que outgoing); false = só quem respondeu
+    onlyNotReplied: z.boolean().optional(),
+  })
+  .optional()
+  .nullable();
+
 const createSchema = z.object({
   name: z.string().min(1).max(255),
   description: z.string().optional().nullable(),
-  triggerType: z.enum(["stage_enter", "tag_added", "manual"]),
+  triggerType: z.enum([
+    "stage_enter",
+    "tag_added",
+    "manual",
+    "manual_broadcast",
+    "first_message",
+    "lead_inactive",
+    "scheduled_once",
+    "scheduled_recurring",
+  ]),
   triggerConfig: z.record(z.unknown()).optional().nullable(),
+  audienceFilter: audienceFilterSchema,
   steps: z
     .array(
       z.object({
@@ -73,6 +97,7 @@ export async function POST(request: NextRequest) {
         description: d.description ?? null,
         triggerType: d.triggerType,
         triggerConfig: d.triggerConfig ?? null,
+        audienceFilter: d.audienceFilter ?? null,
         isActive: true,
       })
       .returning();

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { checkPermission } from "@/lib/permissions";
 import { db } from "@/lib/db";
-import { user, account } from "@/lib/db/schema/users";
+import { user } from "@/lib/db/schema/users";
 import { modulePermission } from "@/lib/db/schema/users";
 import { eq, asc } from "drizzle-orm";
 import type { UserRole } from "@/types";
@@ -64,38 +65,33 @@ export async function POST(request: NextRequest) {
 
     const { name, email, password, role } = parsed.data;
 
-    // Check if email already exists
+    // Email já existe em public.user?
     const [existing] = await db.select({ id: user.id }).from(user).where(eq(user.email, email)).limit(1);
     if (existing) {
       return NextResponse.json({ error: "Este email já está cadastrado." }, { status: 400 });
     }
 
-    // Hash password using the same algorithm as better-auth:
-    // scrypt with N=16384, r=16, p=1, dkLen=64 — stored as "hexsalt:hexkey"
-    const { scrypt: nodeScrypt } = await import("node:crypto");
-    const saltBytes = crypto.getRandomValues(new Uint8Array(16));
-    const salt = Buffer.from(saltBytes).toString("hex");
-    const keyBuf = await new Promise<Buffer>((resolve, reject) => {
-      nodeScrypt(
-        password.normalize("NFKC"),
-        salt,
-        64,
-        { N: 16384, r: 16, p: 1, maxmem: 128 * 16384 * 16 * 2 },
-        (err, key) => (err ? reject(err) : resolve(key))
-      );
+    // Cria em auth.users via Supabase Admin
+    const supa = getSupabaseAdmin();
+    const { data: createData, error: createError } = await supa.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { name },
     });
-    const hashedPassword = `${salt}:${keyBuf.toString("hex")}`;
+    if (createError || !createData.user) {
+      return NextResponse.json(
+        { error: createError?.message ?? "Erro ao criar usuário no Supabase Auth" },
+        { status: 500 }
+      );
+    }
 
-    // Generate IDs the same way better-auth does (random base36-like string)
-    const newUserId = crypto.randomUUID().replace(/-/g, "");
-    const accountId = crypto.randomUUID().replace(/-/g, "");
-
-    // Insert user row
+    // Espelha em public.user (FK em auth.users.id)
     const [created] = await db.insert(user).values({
-      id: newUserId,
+      id: createData.user.id,
       name,
       email,
-      emailVerified: false,
+      emailVerified: true,
       role,
       isActive: true,
     }).returning({
@@ -107,15 +103,6 @@ export async function POST(request: NextRequest) {
       phone: user.phone,
       isActive: user.isActive,
       createdAt: user.createdAt,
-    });
-
-    // Insert account row (better-auth credential provider)
-    await db.insert(account).values({
-      id: accountId,
-      accountId: newUserId,
-      providerId: "credential",
-      userId: newUserId,
-      password: hashedPassword,
     });
 
     return NextResponse.json({ user: created }, { status: 201 });

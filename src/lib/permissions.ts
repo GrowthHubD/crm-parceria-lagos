@@ -2,7 +2,7 @@ import { db } from "./db";
 import { modulePermission } from "./db/schema/users";
 import { eq, and } from "drizzle-orm";
 import type { SystemModule, PermissionAction, UserRole } from "@/types";
-import { DEFAULT_PERMISSIONS, AMS_ONLY_MODULES, SUPERADMIN_ONLY_MODULES } from "@/types";
+import { DEFAULT_PERMISSIONS, AMS_ONLY_MODULES, SUPERADMIN_ONLY_MODULES, PARTNER_ONLY_MODULES } from "@/types";
 import type { TenantContext } from "./tenant";
 
 /**
@@ -28,6 +28,9 @@ export async function checkPermission(
 
   // Superadmin-only modules: bloqueado para todos os outros roles
   if (SUPERADMIN_ONLY_MODULES.includes(module)) return false;
+
+  // Partner-only modules: apenas partner_admin (ou superadmin acima)
+  if (PARTNER_ONLY_MODULES.includes(module) && userRole !== "partner_admin") return false;
 
   // Check explicit permission in database
   const [permission] = await db
@@ -110,9 +113,12 @@ export async function getUserModules(
     modules = modules.filter((m) => !AMS_ONLY_MODULES.includes(m));
   }
 
-  // Filtrar módulos superadmin-only para quem não é superadmin
-  if (userRole !== "superadmin") {
-    modules = modules.filter((m) => !SUPERADMIN_ONLY_MODULES.includes(m));
+  // Superadmin já retornou acima; aqui só filtramos pros outros
+  modules = modules.filter((m) => !SUPERADMIN_ONLY_MODULES.includes(m));
+
+  // Filtrar módulos partner-only para quem não é partner_admin
+  if (userRole !== "partner_admin") {
+    modules = modules.filter((m) => !PARTNER_ONLY_MODULES.includes(m));
   }
 
   return modules;

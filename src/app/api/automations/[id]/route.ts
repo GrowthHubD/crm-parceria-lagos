@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getTenantContext } from "@/lib/tenant";
 import { checkPermission } from "@/lib/permissions";
 import { db } from "@/lib/db";
-import { automation, automationStep, automationLog } from "@/lib/db/schema/automations";
+import { automation, automationStep, automationLog, automationStepVersion } from "@/lib/db/schema/automations";
 import { lead } from "@/lib/db/schema/pipeline";
 import { eq, and, asc, desc } from "drizzle-orm";
 import type { UserRole } from "@/types";
@@ -11,8 +11,20 @@ import type { UserRole } from "@/types";
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   description: z.string().optional().nullable(),
-  triggerType: z.enum(["stage_enter", "tag_added", "manual"]).optional(),
+  triggerType: z
+    .enum([
+      "stage_enter",
+      "tag_added",
+      "manual",
+      "manual_broadcast",
+      "first_message",
+      "lead_inactive",
+      "scheduled_once",
+      "scheduled_recurring",
+    ])
+    .optional(),
   triggerConfig: z.record(z.unknown()).optional().nullable(),
+  audienceFilter: z.record(z.unknown()).optional().nullable(),
   isActive: z.boolean().optional(),
   steps: z
     .array(
@@ -94,6 +106,7 @@ export async function PATCH(
     if (d.description !== undefined) updates.description = d.description;
     if (d.triggerType !== undefined) updates.triggerType = d.triggerType;
     if (d.triggerConfig !== undefined) updates.triggerConfig = d.triggerConfig;
+    if (d.audienceFilter !== undefined) updates.audienceFilter = d.audienceFilter;
     if (d.isActive !== undefined) updates.isActive = d.isActive;
 
     const [updated] = await db
@@ -104,8 +117,24 @@ export async function PATCH(
 
     if (!updated) return NextResponse.json({ error: "Automação não encontrada" }, { status: 404 });
 
-    // Se steps foram fornecidos, substituir todos
+    // Se steps foram fornecidos, substituir — mas antes salva versão dos steps antigos
     if (d.steps) {
+      const oldSteps = await db
+        .select()
+        .from(automationStep)
+        .where(eq(automationStep.automationId, id));
+
+      // Snapshot cada step antigo em automation_step_version (pra histórico/restore)
+      for (const old of oldSteps) {
+        await db.insert(automationStepVersion).values({
+          stepId: old.id,
+          automationId: id,
+          config: old.config,
+          stepType: old.type,
+          createdBy: ctx.userId,
+        });
+      }
+
       await db.delete(automationStep).where(eq(automationStep.automationId, id));
       for (let i = 0; i < d.steps.length; i++) {
         await db.insert(automationStep).values({

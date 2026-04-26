@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { checkPermission } from "@/lib/permissions";
+import { getTenantContext } from "@/lib/tenant";
 import { db } from "@/lib/db";
 import { lead, pipelineStage } from "@/lib/db/schema/pipeline";
 import { client } from "@/lib/db/schema/clients";
@@ -27,11 +27,9 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
-
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    const canEdit = await checkPermission(session.user.id, userRole, "pipeline", "edit");
+    const ctx = await getTenantContext(request.headers);
+    const userRole = ctx.role as UserRole;
+    const canEdit = await checkPermission(ctx.userId, userRole, "pipeline", "edit", ctx);
     if (!canEdit) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
     const body = await request.json();
@@ -160,11 +158,9 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
-
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    const canDelete = await checkPermission(session.user.id, userRole, "pipeline", "delete");
+    const ctx = await getTenantContext(request.headers);
+    const userRole = ctx.role as UserRole;
+    const canDelete = await checkPermission(ctx.userId, userRole, "pipeline", "delete", ctx);
     if (!canDelete) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
     const [deleted] = await db

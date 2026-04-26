@@ -40,7 +40,63 @@ const TRIGGER_LABELS: Record<string, string> = {
   stage_enter: "Ao entrar em etapa",
   tag_added: "Ao adicionar tag",
   manual: "Disparo manual",
+  manual_broadcast: "Broadcast",
+  first_message: "Boas-vindas",
+  lead_inactive: "Follow-up de inatividade",
+  scheduled_once: "Agendada única",
+  scheduled_recurring: "Agendada recorrente",
 };
+
+const WEEKDAY_LABEL = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
+/** Formata a "minutagem" configurada no triggerConfig pro label do card. */
+function formatTiming(triggerType: string, cfg: Record<string, unknown> | null): string | null {
+  if (!cfg) return null;
+
+  if (triggerType === "lead_inactive") {
+    const m = (cfg.inactiveMinutes as number | undefined) ?? 0;
+    const h = (cfg.inactiveHours as number | undefined) ?? 0;
+    const d = (cfg.inactiveDays as number | undefined) ?? 0;
+    const parts: string[] = [];
+    if (d > 0) parts.push(`${d}d`);
+    if (h > 0) parts.push(`${h}h`);
+    if (m > 0) parts.push(`${m}min`);
+    if (parts.length === 0) return null;
+    const win = cfg.sendWindow as { startHour?: number; endHour?: number } | undefined;
+    const timing = `após ${parts.join(" ")}`;
+    return win && typeof win.startHour === "number" && typeof win.endHour === "number"
+      ? `${timing} · ${win.startHour}h–${win.endHour}h`
+      : timing;
+  }
+
+  if (triggerType === "scheduled_once") {
+    const runAt = cfg.runAt as string | undefined;
+    if (!runAt) return null;
+    const d = new Date(runAt);
+    if (isNaN(d.getTime())) return null;
+    return `em ${d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`;
+  }
+
+  if (triggerType === "scheduled_recurring") {
+    const freq = cfg.frequency as string | undefined;
+    const hour = cfg.hour as number | undefined;
+    const minute = cfg.minute as number | undefined;
+    if (freq === undefined || hour === undefined) return null;
+    const time = `${String(hour).padStart(2, "0")}:${String(minute ?? 0).padStart(2, "0")}`;
+    if (freq === "daily") return `diário às ${time}`;
+    if (freq === "weekly") {
+      const w = cfg.weekday as number | undefined;
+      return `semanal (${w !== undefined ? WEEKDAY_LABEL[w] : "?"}) às ${time}`;
+    }
+    if (freq === "monthly") {
+      const day = cfg.day as number | undefined;
+      return `mensal (dia ${day ?? "?"}) às ${time}`;
+    }
+    return null;
+  }
+
+  return null;
+}
 
 const STEP_ICONS: Record<string, React.ElementType> = {
   send_whatsapp: MessageSquare,
@@ -156,8 +212,17 @@ export function AutomationsList({ initialAutomations, stages, canEdit }: Automat
                         {auto.isActive ? "Ativa" : "Inativa"}
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 mt-0.5">
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                       <span className="text-xs text-muted">{TRIGGER_LABELS[auto.triggerType] ?? auto.triggerType}</span>
+                      {(() => {
+                        const timing = formatTiming(auto.triggerType, auto.triggerConfig);
+                        return timing ? (
+                          <>
+                            <span className="text-xs text-muted">·</span>
+                            <span className="text-xs text-primary font-medium">{timing}</span>
+                          </>
+                        ) : null;
+                      })()}
                       <span className="text-xs text-muted">·</span>
                       <span className="text-xs text-muted">{auto.steps.length} etapa{auto.steps.length !== 1 ? "s" : ""}</span>
                     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Plus, MoreVertical } from "lucide-react";
@@ -42,6 +42,7 @@ interface KanbanColumnProps {
   onAddLead: (stageId: string) => void;
   onEditLead: (lead: Lead) => void;
   onDeleteLead: (id: string) => void;
+  onOpenConversation?: (conversationId: string) => void;
   canEdit: boolean;
   canDelete: boolean;
 }
@@ -52,11 +53,14 @@ export function KanbanColumn({
   onAddLead,
   onEditLead,
   onDeleteLead,
+  onOpenConversation,
   canEdit,
   canDelete,
 }: KanbanColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
   const [menuOpen, setMenuOpen] = useState(false);
+  // Memoiza IDs pra SortableContext não re-registrar o dnd-kit em cada render
+  const leadIds = useMemo(() => leads.map((l) => l.id), [leads]);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -139,13 +143,14 @@ export function KanbanColumn({
           isOver && "border-primary/60 bg-primary/5"
         )}
       >
-        <SortableContext items={leads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
+        <SortableContext items={leadIds} strategy={verticalListSortingStrategy}>
           {leads.map((lead) => (
             <LeadCard
               key={lead.id}
               lead={lead}
               onEdit={onEditLead}
               onDelete={onDeleteLead}
+              onOpenConversation={onOpenConversation}
               canEdit={canEdit}
               canDelete={canDelete}
             />
