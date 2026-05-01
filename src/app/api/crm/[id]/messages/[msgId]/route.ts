@@ -37,3 +37,35 @@ export async function PATCH(
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });
   }
 }
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string; msgId: string }> }
+) {
+  try {
+    const { id, msgId } = await params;
+    const ctx = await getTenantContext(request.headers);
+    const canEdit = await checkPermission(ctx.userId, ctx.role as UserRole, "crm", "edit", ctx);
+    if (!canEdit) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
+    // Valida que a mensagem pertence à conversa do tenant atual
+    const [conv] = await db
+      .select({ id: crmConversation.id })
+      .from(crmConversation)
+      .where(and(eq(crmConversation.id, id), eq(crmConversation.tenantId, ctx.tenantId)))
+      .limit(1);
+    if (!conv) return NextResponse.json({ error: "Não encontrado" }, { status: 404 });
+
+    const [deleted] = await db
+      .delete(crmMessage)
+      .where(and(eq(crmMessage.id, msgId), eq(crmMessage.conversationId, id)))
+      .returning({ id: crmMessage.id });
+
+    if (!deleted) return NextResponse.json({ error: "Mensagem não encontrada" }, { status: 404 });
+
+    return NextResponse.json({ ok: true, id: deleted.id });
+  } catch (e) {
+    console.error("[CRM] DELETE message failed:", e);
+    return NextResponse.json({ error: "Erro interno" }, { status: 500 });
+  }
+}

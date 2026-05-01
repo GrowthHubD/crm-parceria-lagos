@@ -36,7 +36,10 @@ export async function GET(
 
     if (!conversation) return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
 
-    // Fetch profile pic lazily — only for non-groups, only when null
+    // Fetch profile pic lazily — only for non-groups, só quando ainda nulo.
+    // Provider Uazapi: ainda não temos endpoint pra pegar foto, então marca
+    // como "none" pra parar de retentar em todo GET (até implementar). Provider
+    // Evolution legado: usa o helper antigo. Sempre best-effort — try/catch.
     const isGroup = conversation.contactJid?.endsWith("@g.us") ?? false;
     if (!isGroup && conversation.contactProfilePicUrl === null) {
       try {
@@ -45,11 +48,16 @@ export async function GET(
           .from(whatsappNumber)
           .where(eq(whatsappNumber.id, conversation.whatsappNumberId))
           .limit(1);
-        if (wNum?.uazapiSession && wNum.uazapiSession !== "baileys") {
+        const provider = process.env.WHATSAPP_PROVIDER ?? "uazapi";
+        if (provider === "evolution" && wNum?.uazapiSession && wNum.uazapiSession !== "baileys") {
           const pic = await evolutionFetchProfilePicture(wNum.uazapiSession, conversation.contactPhone);
           const picToSave = pic ?? "none";
           await db.update(crmConversation).set({ contactProfilePicUrl: picToSave }).where(eq(crmConversation.id, id));
-          conversation = { ...conversation, contactProfilePicUrl: pic ?? "none" };
+          conversation = { ...conversation, contactProfilePicUrl: picToSave };
+        } else {
+          // Uazapi (default): marca "none" pra evitar retry infinito.
+          await db.update(crmConversation).set({ contactProfilePicUrl: "none" }).where(eq(crmConversation.id, id));
+          conversation = { ...conversation, contactProfilePicUrl: "none" };
         }
       } catch { /* ignore */ }
     }

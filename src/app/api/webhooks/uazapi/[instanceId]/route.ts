@@ -23,20 +23,32 @@ export async function POST(
       return NextResponse.json({ ok: true }); // instância não encontrada
     }
 
-    // Validar token contra o token da instância
+    // Validar token contra o token da instância. Defesa em profundidade:
+    // o token da instância é único por whatsappNumber, então se o request
+    // chegou na rota /[instanceId] com um token, o token TEM que bater com
+    // o uazapiToken daquela instância — se cair pro fallback global, valida
+    // pelo menos o caller saber um token global válido.
     const receivedToken =
       request.headers.get("authorization") ??
       request.headers.get("x-webhook-secret") ??
       "";
 
-    if (wNum.uazapiToken && receivedToken !== wNum.uazapiToken) {
-      // Fallback: aceitar tokens globais
+    const instanceMatch =
+      Boolean(wNum.uazapiToken) &&
+      wNum.uazapiToken !== "baileys" &&
+      receivedToken === wNum.uazapiToken;
+
+    if (!instanceMatch) {
+      // Fallback: aceitar tokens globais (ex.: ambiente de dev compartilhado)
       const globalTokens = [
         process.env.UAZAPI_TOKEN,
         process.env.UAZAPI_WEBHOOK_SECRET,
-      ].filter(Boolean);
+      ].filter(Boolean) as string[];
 
-      if (globalTokens.length > 0 && !globalTokens.includes(receivedToken)) {
+      const globalMatch =
+        globalTokens.length > 0 && globalTokens.includes(receivedToken);
+
+      if (!globalMatch) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
     }

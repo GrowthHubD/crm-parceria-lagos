@@ -97,6 +97,10 @@ export const crmMessage = pgTable(
   (table) => [
     index("idx_crm_message_conversation").on(table.conversationId),
     index("idx_crm_message_timestamp").on(table.timestamp),
+    // Dedup de mensagens recebidas/enviadas. NULL+NULL é distinto em UNIQUE
+    // do Postgres por default, então mensagens sem messageIdWa (legado) não
+    // colidem entre si. Aplicado via scripts/apply-message-dedup-index.ts.
+    unique("uq_crm_message_id_wa").on(table.conversationId, table.messageIdWa),
   ]
 );
 

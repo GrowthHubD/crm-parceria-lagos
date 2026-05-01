@@ -13,22 +13,34 @@ import { eq, and } from "drizzle-orm";
 const BASE = (process.env.UAZAPI_BASE_URL ?? "https://api.uazapi.com").replace(/\/$/, "");
 const ADMIN_TOKEN = process.env.UAZAPI_ADMIN_TOKEN ?? process.env.UAZAPI_TOKEN ?? "";
 
-function authHeaders(token?: string) {
-  const t = token || ADMIN_TOKEN;
-  return {
-    "Content-Type": "application/json",
-    token: t,
-  };
+/**
+ * Headers de auth da Uazapi v2:
+ * - `token: <instanceToken>` para operações ESCOPADAS a uma instância
+ *   (status, qrcode, /send/*, webhook por instância, etc).
+ * - `admintoken: <ADMIN_TOKEN>` para operações ADMIN globais
+ *   (criar instância, listar todas, deletar, etc).
+ *
+ * Confusão clássica: passar admin token como `token` retorna 401 Unauthorized.
+ */
+function authHeaders(token?: string, useAdmin = false) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (useAdmin) {
+    if (ADMIN_TOKEN) headers.admintoken = ADMIN_TOKEN;
+  } else {
+    headers.token = token || ADMIN_TOKEN;
+  }
+  return headers;
 }
 
 async function req<T>(
   path: string,
   init?: RequestInit,
-  token?: string
+  token?: string,
+  useAdmin = false
 ): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { ...authHeaders(token), ...(init?.headers ?? {}) },
+    headers: { ...authHeaders(token, useAdmin), ...(init?.headers ?? {}) },
   });
   const text = await res.text();
   if (!res.ok) {
@@ -45,12 +57,22 @@ async function req<T>(
 
 export type UazapiStatusValue = "connected" | "disconnected" | "connecting" | "qr";
 
+/** Estrutura nested da resposta /instance/init na Uazapi v2. */
 export interface UazapiInitResult {
   status?: string;
   message?: string;
   session?: string;
   token?: string;
   instance_id?: string;
+  // Resposta v2 vem com "instance" nested:
+  instance?: {
+    id?: string;
+    token?: string;
+    name?: string;
+    status?: string;
+  };
+  name?: string;
+  response?: string;
 }
 
 export interface UazapiQrResult {
@@ -76,25 +98,57 @@ export interface UazapiSendResult {
 
 /**
  * Cria/reinicia uma instância. Retorna token específico da instância
- * se a API fornecer; senão cai no admin token global.
+ * (campo `instance.token` na response v2).
+ *
+ * Auth: header `admintoken` com o ADMIN_TOKEN — `/instance/init` é op admin.
+ * Body: `{ name: instanceId }` — Uazapi v2 usa `name` ou `instanceName`.
  */
 export async function uazapiInitInstance(instanceId: string): Promise<UazapiInitResult> {
-  return req<UazapiInitResult>("/instance/init", {
-    method: "POST",
-    body: JSON.stringify({ instance_id: instanceId }),
-  });
+  const result = await req<UazapiInitResult>(
+    "/instance/init",
+    {
+      method: "POST",
+      body: JSON.stringify({ name: instanceId }),
+    },
+    undefined,
+    true /* useAdmin */
+  );
+  // Normaliza: v2 vem com `instance.token`; mantemos `token` no top-level
+  // pra compat com chamadores que esperam o formato antigo.
+  if (result.instance?.token && !result.token) {
+    return { ...result, token: result.instance.token, instance_id: result.instance.id };
+  }
+  return result;
 }
 
+/**
+ * Pega o QR code da instância. Na Uazapi v2 o endpoint é POST `/instance/connect`
+ * (e não `/instance/qrcode`), com body `{ name }` e header `token` da instância.
+ *
+ * Response shape: `{ connected, instance: { qrcode, status, paircode, ... } }`.
+ * Aplaina o resultado pra `UazapiQrResult` (compat com chamadores antigos).
+ */
 export async function uazapiGetQr(
   instanceId: string,
   instanceToken?: string
 ): Promise<UazapiQrResult> {
   try {
-    return await req<UazapiQrResult>(
-      `/instance/qrcode?instance_id=${encodeURIComponent(instanceId)}`,
-      undefined,
+    const r = await req<{
+      connected?: boolean;
+      instance?: { qrcode?: string; status?: string; paircode?: string };
+    }>(
+      `/instance/connect`,
+      {
+        method: "POST",
+        body: JSON.stringify({ name: instanceId }),
+      },
       instanceToken
     );
+    return {
+      qrcode: r.instance?.qrcode,
+      connected: Boolean(r.connected),
+      status: r.instance?.status,
+    };
   } catch {
     return { status: "error", connected: false };
   }
@@ -113,6 +167,20 @@ export async function uazapiGetStatus(
     return r;
   } catch {
     return { status: "disconnected", connected: false };
+  }
+}
+
+/**
+ * Deleta uma instância — libera slot no plano Uazapi.
+ * Endpoint v2: DELETE /instance com header `token` da instância (não admin).
+ * IMPORTANTE: chame antes de tentar criar nova com mesmo nome.
+ */
+export async function uazapiDeleteInstance(instanceToken: string): Promise<boolean> {
+  try {
+    await req("/instance", { method: "DELETE" }, instanceToken);
+    return true;
+  } catch {
+    return false;
   }
 }
 

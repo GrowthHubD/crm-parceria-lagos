@@ -4,7 +4,8 @@ import { getTenantContext } from "@/lib/tenant";
 import { db } from "@/lib/db";
 import { crmConversation, crmMessage, whatsappNumber } from "@/lib/db/schema/crm";
 import { lead, leadTagAssignment, pipelineStage } from "@/lib/db/schema/pipeline";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { tenant } from "@/lib/db/schema/tenants";
+import { eq, and, desc, inArray, or } from "drizzle-orm";
 import type { UserRole } from "@/types";
 
 /**
@@ -36,6 +37,35 @@ export async function GET(request: NextRequest) {
     const tagId = searchParams.get("tagId");
     const stageId = searchParams.get("stageId");
     const pipelineId = searchParams.get("pipelineId");
+    const tenantFilter = searchParams.get("tenantId");
+
+    // ── Tenants visíveis para este user (mesma regra do SSR em /crm/page.tsx)
+    const visibleTenants = await (async () => {
+      if (ctx.isPlatformOwner) {
+        return db
+          .select({ id: tenant.id, name: tenant.name })
+          .from(tenant)
+          .where(eq(tenant.status, "active"));
+      }
+      if (ctx.role === "superadmin" || ctx.role === "admin") {
+        return db
+          .select({ id: tenant.id, name: tenant.name })
+          .from(tenant)
+          .where(or(eq(tenant.id, ctx.tenantId), eq(tenant.partnerId, ctx.tenantId)));
+      }
+      return db
+        .select({ id: tenant.id, name: tenant.name })
+        .from(tenant)
+        .where(eq(tenant.id, ctx.tenantId));
+    })();
+    const visibleTenantIds = visibleTenants.map((t) => t.id);
+    const tenantNameById = new Map(visibleTenants.map((t) => [t.id, t.name]));
+
+    // Filtro explícito por tenant (dropdown da inbox) só vale dentro do set visível
+    const effectiveTenantIds =
+      tenantFilter && visibleTenantIds.includes(tenantFilter)
+        ? [tenantFilter]
+        : visibleTenantIds;
 
     // ── Resolve conversationId set restritivo via JOIN com lead quando o
     //    filtro é por tag/stage/pipeline (cross-domain pra CRM). Fazemos isso
@@ -43,8 +73,8 @@ export async function GET(request: NextRequest) {
     let restrictToConvIds: string[] | null = null;
 
     if (tagId || stageId || pipelineId) {
-      // Buscar leads do tenant que satisfaçam os filtros, e pegar seus crmConversationId
-      const conditions = [eq(lead.tenantId, ctx.tenantId)];
+      // Buscar leads dos tenants visíveis que satisfaçam os filtros, e pegar seus crmConversationId
+      const conditions = [inArray(lead.tenantId, effectiveTenantIds)];
       if (stageId) conditions.push(eq(lead.stageId, stageId));
 
       // pipelineId → restringe leads cujo stage pertença a esse pipeline
@@ -54,7 +84,7 @@ export async function GET(request: NextRequest) {
           .from(pipelineStage)
           .where(
             and(
-              eq(pipelineStage.tenantId, ctx.tenantId),
+              inArray(pipelineStage.tenantId, effectiveTenantIds),
               eq(pipelineStage.pipelineId, pipelineId)
             )
           );
@@ -87,8 +117,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Filtrar por tenant
-    const whereConditions = [eq(crmConversation.tenantId, ctx.tenantId)];
+    // Filtrar por tenants visíveis (regra absoluta #1)
+    const whereConditions = [inArray(crmConversation.tenantId, effectiveTenantIds)];
     if (numberId) whereConditions.push(eq(crmConversation.whatsappNumberId, numberId));
     if (classification) whereConditions.push(eq(crmConversation.classification, classification));
     if (restrictToConvIds) whereConditions.push(inArray(crmConversation.id, restrictToConvIds));
@@ -96,6 +126,7 @@ export async function GET(request: NextRequest) {
     const conversations = await db
       .select({
         id: crmConversation.id,
+        tenantId: crmConversation.tenantId,
         whatsappNumberId: crmConversation.whatsappNumberId,
         contactPhone: crmConversation.contactPhone,
         contactJid: crmConversation.contactJid,
@@ -118,7 +149,7 @@ export async function GET(request: NextRequest) {
     const numbers = await db
       .select()
       .from(whatsappNumber)
-      .where(and(eq(whatsappNumber.isActive, true), eq(whatsappNumber.tenantId, ctx.tenantId)));
+      .where(and(eq(whatsappNumber.isActive, true), inArray(whatsappNumber.tenantId, effectiveTenantIds)));
 
     // ── Preview da última msg por conversa (1 query LIMIT 1 por conv,
     //    em paralelo). Mais previsível que JOIN + DISTINCT ON.
@@ -149,13 +180,18 @@ export async function GET(request: NextRequest) {
       const last = lastMsgByConv.get(c.id);
       return {
         ...c,
+        tenantName: tenantNameById.get(c.tenantId) ?? null,
         lastMessagePreview: last ? buildPreview(last.content, last.mediaType) : null,
         lastMessageDirection: last?.direction ?? null,
         lastMessageMediaType: last?.mediaType ?? null,
       };
     });
 
-    return NextResponse.json({ conversations: conversationsWithPreview, numbers });
+    return NextResponse.json({
+      conversations: conversationsWithPreview,
+      numbers,
+      tenants: visibleTenants,
+    });
   } catch {
     console.error("[CRM] GET failed:", { operation: "list" });
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });

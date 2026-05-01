@@ -7,6 +7,10 @@ import { crmConversation, crmMessage, whatsappNumber } from "@/lib/db/schema/crm
 import { eq, and } from "drizzle-orm";
 import { sendMedia } from "@/lib/whatsapp";
 import { uploadWhatsappMedia } from "@/lib/supabase-storage";
+// ffmpeg só roda em Node runtime (não em Cloudflare Workers/edge). Em CF, o
+// import simplesmente não é resolvido e a conversão é pulada — áudio webm vai
+// sem conversão (vira documento no WhatsApp). Pra PTT em CF: refactor futuro
+// pra usar opus-recorder client-side (já instalado em deps + workers em /public/opus/).
 import { ensureOggDataUri } from "@/lib/audio-convert";
 import type { UserRole } from "@/types";
 

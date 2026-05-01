@@ -69,6 +69,13 @@ export async function POST(request: NextRequest) {
 
     // ── 2) Criar instância se necessário
     const createResult = await createInstance(effectiveInstanceId, webhookUrl);
+    if (!createResult.ok) {
+      console.error("[WHATSAPP] createInstance failed for tenant", targetTenantId, "—", createResult.error);
+      return NextResponse.json(
+        { error: "Erro ao conectar, falar com suporte" },
+        { status: 502 }
+      );
+    }
     const instanceToken = createResult.token ?? wNum?.uazapiToken ?? "";
 
     // ── 3) Upsert no banco

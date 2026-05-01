@@ -366,6 +366,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // Defesa em profundidade: valida que o token vindo no payload bate com o
+    // token persistido pra essa instância. A Uazapi inclui o instance token
+    // no campo `token` do payload — sem esse check, qualquer um que conheça
+    // o instanceName conseguia injetar conversas/mensagens fake.
+    // Aceita também header `authorization` ou `x-webhook-secret` como fallback
+    // (algumas versões da Uazapi enviam por header em vez do body).
+    const headerToken =
+      request.headers.get("authorization") ??
+      request.headers.get("x-webhook-secret") ??
+      "";
+    const bodyToken = payload.token ?? "";
+    const expected = wNum.uazapiToken;
+    const tokenOk =
+      Boolean(expected) &&
+      expected !== "baileys" &&
+      (bodyToken === expected || headerToken === expected);
+
+    if (!tokenOk) {
+      // Fallback: aceita global tokens (configurar via env)
+      const globalTokens = [
+        process.env.UAZAPI_TOKEN,
+        process.env.UAZAPI_WEBHOOK_SECRET,
+      ].filter(Boolean) as string[];
+      const globalMatch =
+        globalTokens.length > 0 &&
+        (globalTokens.includes(bodyToken) || globalTokens.includes(headerToken));
+      if (!globalMatch) {
+        console.warn("[UAZAPI-V2] Token inválido pra instância:", instanceName);
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
+
     // Eventos de conexão
     if (event === "connection" || event === "qr") {
       // Sem ação por enquanto — instância já é gerenciada pelo painel Uazapi.

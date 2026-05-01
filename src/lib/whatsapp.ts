@@ -49,6 +49,8 @@ export interface CreateResult {
   ok: boolean;
   /** Token específico da instância (Uazapi devolve; Evolution não usa) */
   token?: string;
+  /** Mensagem de erro do provider quando ok=false (para log; não exibir ao usuário) */
+  error?: string;
 }
 
 export interface QrResult {
@@ -78,21 +80,25 @@ export async function createInstance(
       const token = r.token;
       await uazapiSetWebhook(webhookUrl, token);
       return { ok: true, token };
-    } catch {
-      return { ok: false };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[WHATSAPP] uazapi createInstance failed:", message);
+      return { ok: false, error: message };
     }
   }
 
   try {
     const r = await evolutionCreateInstance(instanceId, webhookUrl);
-    return { ok: !r.error };
-  } catch {
+    return { ok: !r.error, error: r.error };
+  } catch (e) {
     // Pode já existir — configurar webhook e seguir
     try {
       await evolutionSetWebhook(instanceId, webhookUrl);
       return { ok: true };
-    } catch {
-      return { ok: false };
+    } catch (e2) {
+      const message = e2 instanceof Error ? e2.message : String(e2);
+      console.error("[WHATSAPP] evolution createInstance failed:", e, message);
+      return { ok: false, error: message };
     }
   }
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { ArrowLeft, Send, Loader2, Tag, UserPlus, GitBranch, CornerUpLeft, X, ChevronDown, Star, Copy, Download, CheckSquare, Plus, FileText, Users, RotateCcw } from "lucide-react";
+import { ArrowLeft, Send, Loader2, Tag, UserPlus, GitBranch, CornerUpLeft, X, ChevronDown, Star, Copy, Download, CheckSquare, Plus, FileText, Users, RotateCcw, Trash2, ListTodo } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -11,6 +11,7 @@ import { AudioPlayer } from "@/components/crm/audio-player";
 import { AudioRecorder } from "@/components/crm/audio-recorder";
 import { MediaLightbox } from "@/components/crm/media-lightbox";
 import { StickerView } from "@/components/crm/sticker-view";
+import { QuickTaskModal } from "@/components/crm/quick-task-modal";
 
 interface Message {
   id: string;
@@ -215,6 +216,7 @@ function groupMessages(messages: Message[]): DisplayItem[] {
 interface ConversationViewProps {
   conversationId: string;
   canEdit: boolean;
+  currentUserId: string;
   onBack: () => void;
   onClassificationChange: (id: string, classification: string) => void;
 }
@@ -266,7 +268,7 @@ function ResetConversationButton({
   );
 }
 
-export function ConversationView({ conversationId, canEdit, onBack, onClassificationChange }: ConversationViewProps) {
+export function ConversationView({ conversationId, canEdit, currentUserId, onBack, onClassificationChange }: ConversationViewProps) {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [linkedLead, setLinkedLead] = useState<LinkedLead | null>(null);
@@ -282,6 +284,7 @@ export function ConversationView({ conversationId, canEdit, onBack, onClassifica
   const [recordingActive, setRecordingActive] = useState(false);
   const [editingAlias, setEditingAlias] = useState(false);
   const [aliasInput, setAliasInput] = useState("");
+  const [quickTaskOpen, setQuickTaskOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const wasAtBottomRef = useRef(true);
@@ -496,6 +499,32 @@ export function ConversationView({ conversationId, canEdit, onBack, onClassifica
     });
     setConversation((prev) => prev ? { ...prev, classification: value } : prev);
     onClassificationChange(conversationId, value);
+  };
+
+  const handleDeleteSelected = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    if (!confirm(`Excluir ${ids.length} mensagem${ids.length !== 1 ? "s" : ""}? Isso é permanente.`)) {
+      return;
+    }
+    // Otimista: remove do estado local primeiro
+    setMessages((prev) => prev.filter((m) => !selected.has(m.id)));
+    setSelected(new Set());
+    setSelectMode(false);
+
+    // DELETE em paralelo
+    const results = await Promise.allSettled(
+      ids.map((msgId) =>
+        fetch(`/api/crm/${conversationId}/messages/${msgId}`, { method: "DELETE" })
+      )
+    );
+    const failed = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok));
+    if (failed.length > 0) {
+      toast.error(`${failed.length} mensagem(ns) não foram excluídas. Atualizando…`);
+      fetchMessages(); // refetch pra reconciliar
+    } else {
+      toast.success(`${ids.length} mensagem${ids.length !== 1 ? "s" : ""} excluída${ids.length !== 1 ? "s" : ""}`);
+    }
   };
 
   const saveAlias = async () => {
@@ -716,15 +745,27 @@ export function ConversationView({ conversationId, canEdit, onBack, onClassifica
           )}
         </div>
         {linkedLead ? (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 rounded-lg shrink-0">
-            <GitBranch className="w-3.5 h-3.5 text-primary" />
-            <span className="text-xs font-medium text-primary">{linkedLead.name}</span>
-            {linkedLead.stageName && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: `${linkedLead.stageColor ?? "#6C5CE7"}20`, color: linkedLead.stageColor ?? "#6C5CE7" }}>
-                {linkedLead.stageName}
-              </span>
+          <>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 rounded-lg shrink-0">
+              <GitBranch className="w-3.5 h-3.5 text-primary" />
+              <span className="text-xs font-medium text-primary">{linkedLead.name}</span>
+              {linkedLead.stageName && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: `${linkedLead.stageColor ?? "#6C5CE7"}20`, color: linkedLead.stageColor ?? "#6C5CE7" }}>
+                  {linkedLead.stageName}
+                </span>
+              )}
+            </div>
+            {canEdit && (
+              <button
+                onClick={() => setQuickTaskOpen(true)}
+                title="Criar tarefa pra esse lead"
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-muted hover:text-foreground border border-border rounded-lg hover:bg-surface-2 transition-colors cursor-pointer shrink-0"
+              >
+                <ListTodo className="w-3.5 h-3.5" />
+                Tarefa
+              </button>
             )}
-          </div>
+          </>
         ) : canEdit && conversation && (
           <button onClick={handleCreateLead} disabled={linkingLead} className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-muted hover:text-foreground border border-border rounded-lg hover:bg-surface-2 transition-colors cursor-pointer shrink-0">
             {linkingLead ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
@@ -774,9 +815,26 @@ export function ConversationView({ conversationId, canEdit, onBack, onClassifica
 
       {/* Selection toolbar */}
       {selectMode && (
-        <div className="border-t border-border px-4 py-2.5 flex items-center gap-3 shrink-0 bg-surface-2">
-          <span className="text-sm text-foreground font-medium flex-1">{selected.size} selecionada{selected.size !== 1 ? "s" : ""}</span>
-          <button onClick={() => { setSelectMode(false); setSelected(new Set()); }} className="text-xs text-muted hover:text-foreground transition-colors">Cancelar</button>
+        <div className="border-t border-border px-4 py-2.5 flex items-center gap-2 shrink-0 bg-surface-2">
+          <span className="text-sm text-foreground font-medium flex-1">
+            {selected.size} selecionada{selected.size !== 1 ? "s" : ""}
+          </span>
+          {selected.size > 0 && (
+            <button
+              onClick={handleDeleteSelected}
+              className="flex items-center gap-1.5 text-xs text-error hover:bg-error/10 px-3 py-1.5 rounded-lg border border-error/30 transition-colors cursor-pointer"
+              title="Excluir selecionadas"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Excluir
+            </button>
+          )}
+          <button
+            onClick={() => { setSelectMode(false); setSelected(new Set()); }}
+            className="text-xs text-muted hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-surface transition-colors cursor-pointer"
+          >
+            Cancelar
+          </button>
         </div>
       )}
 
@@ -884,6 +942,20 @@ export function ConversationView({ conversationId, canEdit, onBack, onClassifica
         alt={lightbox?.alt}
         onClose={() => setLightbox(null)}
       />
+
+      {linkedLead && (
+        <QuickTaskModal
+          open={quickTaskOpen}
+          onClose={() => setQuickTaskOpen(false)}
+          leadId={linkedLead.id}
+          leadName={linkedLead.name}
+          currentUserId={currentUserId}
+          onCreated={() => {
+            // Trigger refresh do badge "próxima tarefa" se existir.
+            // O page recarregará linkedLead.nextFollowUp na próxima fetch.
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -19,6 +19,8 @@ import {
 
 interface Conversation {
   id: string;
+  tenantId: string;
+  tenantName?: string | null;
   whatsappNumberId: string;
   contactPhone: string;
   contactJid: string | null;
@@ -43,9 +45,16 @@ interface WhatsappNumber {
   isActive: boolean;
 }
 
+interface TenantOption {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 interface InboxProps {
   initialConversations: Conversation[];
   numbers: WhatsappNumber[];
+  tenants?: TenantOption[];
   canEdit: boolean;
   currentUserId: string;
   tags?: FilterTag[];
@@ -64,7 +73,9 @@ const CLASSIFICATION_CONFIG: Record<string, { label: string; color: string }> = 
 export function Inbox({
   initialConversations,
   numbers,
+  tenants = [],
   canEdit,
+  currentUserId,
   tags = [],
   stages = [],
   funnels = [],
@@ -72,21 +83,22 @@ export function Inbox({
   const [conversations, setConversations] = useState(initialConversations);
   const [search, setSearch] = useState("");
   const [numberFilter, setNumberFilter] = useState("all");
+  const [tenantFilter, setTenantFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [, setLastUpdate] = useState(Date.now());
   const prevCount = useRef(initialConversations.length);
+  const showTenantBadge = tenants.length > 1;
 
   // Filtros compartilhados (URL-driven)
   const sharedFilters = useLeadFiltersFromUrl();
 
   const refresh = useCallback(async (silent = true) => {
     try {
-      // Combina filtros compartilhados (URL) + filtros locais (number)
+      // Combina filtros compartilhados (URL) + filtros locais (number, tenant)
       const sharedQs = buildLeadFiltersQuery(sharedFilters);
       const params = new URLSearchParams(sharedQs);
       if (numberFilter !== "all") params.set("numberId", numberFilter);
-      // classification do shared já vai como `classification`; mas o legado usava
-      // estado local. Agora vem 100% do URL → buildLeadFiltersQuery setou.
+      if (tenantFilter !== "all") params.set("tenantId", tenantFilter);
       const qs = params.toString();
       const res = await fetch(`/api/crm${qs ? `?${qs}` : ""}`);
       if (res.ok) {
@@ -98,7 +110,7 @@ export function Inbox({
         }
       }
     } catch { /* silent */ }
-  }, [numberFilter, sharedFilters]);
+  }, [numberFilter, tenantFilter, sharedFilters]);
 
   // Refetch quando filtros compartilhados mudam (URL params)
   useEffect(() => {
@@ -150,12 +162,13 @@ export function Inbox({
     };
   }, [refresh]);
 
-  // Search e number filter aplicados client-side sobre a lista já filtrada pelo server.
+  // Search, number e tenant filter aplicados client-side sobre a lista já filtrada pelo server.
   const filtered = conversations.filter((c) => {
     const name = c.contactName ?? c.contactPushName ?? c.contactPhone;
     const matchSearch = !search || name.toLowerCase().includes(search.toLowerCase()) || c.contactPhone.includes(search);
     const matchNumber = numberFilter === "all" || c.whatsappNumberId === numberFilter;
-    return matchSearch && matchNumber;
+    const matchTenant = tenantFilter === "all" || c.tenantId === tenantFilter;
+    return matchSearch && matchNumber && matchTenant;
   });
 
   const totalUnread = conversations.reduce((s, c) => s + c.unreadCount, 0);
@@ -173,6 +186,7 @@ export function Inbox({
       <ConversationView
         conversationId={selectedId}
         canEdit={canEdit}
+        currentUserId={currentUserId}
         onBack={() => setSelectedId(null)}
         onClassificationChange={(id, classification) => {
           setConversations((prev) =>
@@ -212,6 +226,16 @@ export function Inbox({
             options={[
               { value: "all", label: "Todos os números" },
               ...numbers.map((n) => ({ value: n.id, label: n.label })),
+            ]}
+          />
+        )}
+        {tenants.length > 1 && (
+          <Select
+            value={tenantFilter}
+            onChange={setTenantFilter}
+            options={[
+              { value: "all", label: "Todos os clientes" },
+              ...tenants.map((t) => ({ value: t.id, label: t.name })),
             ]}
           />
         )}
@@ -307,6 +331,11 @@ export function Inbox({
                   <div className="flex items-center gap-2 mt-0.5">
                     <Circle className={cn("w-2 h-2 fill-current shrink-0", config.color)} />
                     <span className={cn("text-small", config.color)}>{config.label}</span>
+                    {showTenantBadge && c.tenantName && (
+                      <span className="text-small px-1.5 py-0.5 rounded bg-primary/10 text-primary truncate max-w-[8rem]">
+                        {c.tenantName}
+                      </span>
+                    )}
                     {c.numberLabel && (
                       <span className="text-small text-muted/60 ml-auto truncate">{c.numberLabel}</span>
                     )}
