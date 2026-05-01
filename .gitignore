@@ -11,6 +11,11 @@ Thumbs.db
 dist/
 .cache/
 .next/
+.open-next/
+.wrangler/
+.vercel/
+.claude/
+tsconfig.tsbuildinfo
 seed-output.txt
 seed-error.txt
 next-env.d.ts

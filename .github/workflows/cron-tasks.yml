@@ -1,0 +1,41 @@
+name: cron-tasks
+
+# GitHub Actions cron — substitui o Cloudflare Cron Trigger (limit free atingido)
+# Roda a cada 15min: lembretes de tarefas + automações WhatsApp.
+#
+# Setup necessário:
+# 1. No repo, vá em Settings → Secrets and variables → Actions → New secret
+# 2. Adicione `CRON_SECRET` com o mesmo valor do .env.local (Bearer do Worker)
+# 3. Faça push deste arquivo. Pronto. Aba "Actions" mostra histórico.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *" # a cada 15min, em UTC
+  # Permite disparar manualmente pela UI do GitHub também
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Lembretes de tarefas (task-reminders)
+        run: |
+          curl -fsSL --max-time 60 \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://crm.methodgrowthhub.com.br/api/cron/task-reminders \
+            | head -c 2000
+          echo ""
+
+      - name: Automações de follow-up (envia mensagens pendentes)
+        run: |
+          curl -fsSL --max-time 60 \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://crm.methodgrowthhub.com.br/api/cron/follow-up \
+            | head -c 2000
+          echo ""

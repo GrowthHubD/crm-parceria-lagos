@@ -6,6 +6,27 @@
 
 ---
 
+## Diretrizes de Comportamento
+
+### Reduzir verbosidade
+- Be concise. Avoid unnecessary explanations unless asked.
+- Don't summarize what you just did after completing a task.
+- Skip preambles and affirmations ("Sure!", "Great question", etc).
+
+### Controle de leitura de arquivos
+- Don't read files you haven't been explicitly asked to read.
+- Read only the specific sections needed, not entire files.
+- Don't re-read files already in context.
+
+### Controle de planejamento
+- Don't create plans or outlines unless explicitly asked.
+- Prefer direct action over planning when the task is clear.
+
+### Compactação proativa
+- When context grows large, suggest compacting before continuing.
+
+---
+
 ## Estado Atual do Projeto
 
 **Data da última atualização:** 2026-04-13
