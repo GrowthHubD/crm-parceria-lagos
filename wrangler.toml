@@ -1,8 +1,65 @@
-name = "sistema-gh"
-pages_build_output_dir = ".vercel/output/static"
-compatibility_date = "2024-12-01"
+name = "crm-parceria-lagos"
+compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
+# Mantém o subdomínio workers.dev ativo como fallback (URL legacy ainda
+# funciona enquanto DNS do custom domain propaga ou caso precisemos voltar).
+workers_dev = true
+# OpenNext output (gerado por `pnpm run build:cf`).
+# IMPORTANTE: `main` precisa ficar ANTES de qualquer `[section]`, senão
+# o parser TOML interpreta a chave como pertencente à última seção aberta.
+main = ".open-next/worker.js"
 
-# NOTE: cron triggers are handled externally (cron-job.org) calling:
-#   GET /api/cron/kanban-daily   — daily at 08:00 UTC  (Authorization: Bearer CRON_SECRET)
-#   GET /api/cron/kanban-weekly  — Monday at 08:00 UTC (Authorization: Bearer CRON_SECRET)
+# Smart Placement DESABILITADO temporariamente — estava causando cold-starts
+# em isolates de múltiplas regiões durante warm-up. Sintoma: redirect("/login")
+# de server components retornava 503 com NEXT_REDIRECT serializado como erro
+# ao invés de virar HTTP 307. Reativar quando Smart Placement provar estabilidade.
+# [placement]
+# mode = "smart"
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+# Custom domain: aponta crm.methodgrowthhub.com.br pro Worker via DNS
+# automático da Cloudflare. Cria registro CNAME + provisiona SSL na hora.
+# URL primária pra clientes (magic links, webhooks etc). Mais brandable
+# e estável que workers.dev (ex.: se mudar hospedagem, só ajusta DNS).
+[[routes]]
+pattern = "crm.methodgrowthhub.com.br"
+custom_domain = true
+
+# Cron Triggers desativados — conta CF atingiu limite de 5 crons no plano free.
+# Alternativa: configurar cron externo (cron-job.org / GitHub Actions / EasyCron)
+# chamando: GET https://<URL>/api/cron/follow-up
+# Header: Authorization: Bearer <CRON_SECRET>
+# Frequência: a cada 1-5 minutos.
+
+# Hyperdrive — pool de conexões Postgres na borda CF. Resolve crashes
+# intermitentes que ocorriam com postgres-js TCP cold-start em workers free.
+# Binding env.HYPERDRIVE expõe { connectionString } pra usar no lib/db.
+# `localConnectionString` é só pra `wrangler dev` (não usado em prod);
+# placeholder evita erro do OpenNext deploy. Pra rodar dev local com
+# Hyperdrive emulado, set CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE.
+[[kv_namespaces]]
+binding = "AUTH_CACHE"
+id = "5cf9dc108670461b8cc7271683456b03"
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "f66038cb8c424c418f3e5a190027db7c"
+localConnectionString = "postgresql://placeholder:placeholder@localhost:5432/placeholder"
+
+# Variáveis públicas (não-secretas). Secretas vão via `wrangler secret put NOME`.
+[vars]
+WHATSAPP_PROVIDER = "uazapi"
+AUTOMATION_DRY_RUN = "false"
+AUTOMATION_TICK_DISABLED = "true" # ticker setInterval desligado — Cron Trigger toma conta
+# URL pública da app — usada em magic links (Supabase) e na config de webhook
+# Uazapi pra novos clientes (provisionClient). Trocar quando migrar pra DNS
+# custom (ex.: crm.lagos.com.br).
+#
+# APP_URL sem prefixo NEXT_PUBLIC_ é lido apenas server-side via process.env.
+# NEXT_PUBLIC_APP_URL fica replicada (sem o `_PUBLIC_` ela não é inlineada
+# pelo Next no build, então no client é lido só se exposta separadamente).
+APP_URL = "https://crm.methodgrowthhub.com.br"
+NEXT_PUBLIC_APP_URL = "https://crm.methodgrowthhub.com.br"

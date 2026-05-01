@@ -34,6 +34,10 @@ export async function proxy(request: NextRequest) {
   return response;
 }
 
+// Next 16: middleware roda em edge runtime por default; flag explícita não é
+// mais aceita. OpenNext/Cloudflare bundla esse arquivo como middleware
+// separado em .open-next/middleware/handler.mjs.
+
 export const config = {
   matcher: [
     /*

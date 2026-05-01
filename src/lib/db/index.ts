@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
+import { cache } from "react";
 
 import * as tenants from "./schema/tenants";
 import * as users from "./schema/users";
@@ -35,17 +36,55 @@ type DbInstance = ReturnType<typeof drizzle<typeof schema>>;
 
 let _db: DbInstance | null = null;
 
+function isCloudflareWorker(): boolean {
+  return typeof navigator !== "undefined" &&
+    (navigator as Navigator & { userAgent?: string }).userAgent === "Cloudflare-Workers";
+}
+
+/**
+ * Resolve a connection string. Em CF Workers, prefere o binding HYPERDRIVE
+ * (pool de conexões na borda — elimina cold-start TCP). Fallback pra
+ * DATABASE_URL quando rodando local ou se Hyperdrive não tá ligado.
+ *
+ * Usa globalThis diretamente — require() não existe em CF Workers (ESM).
+ */
+function resolveConnectionString(): string {
+  try {
+    type CfCtx = { env?: { HYPERDRIVE?: { connectionString?: string } } };
+    const ctx = (globalThis as Record<symbol, CfCtx | undefined>)[
+      Symbol.for("__cloudflare-context__")
+    ];
+    if (ctx?.env?.HYPERDRIVE?.connectionString) return ctx.env.HYPERDRIVE.connectionString;
+  } catch { /* não tá em CF Worker */ }
+  return process.env.DATABASE_URL!;
+}
+
+function makeDb(): DbInstance {
+  const client = postgres(resolveConnectionString(), {
+    prepare: false,
+    max: 1,
+    idle_timeout: 20,
+    connect_timeout: 15,
+    max_lifetime: 60 * 30,
+    fetch_types: false,
+  });
+  return drizzle(client, { schema });
+}
+
+/**
+ * Em CF Workers, `React.cache()` deduplica chamadas dentro de UM SÓ request:
+ * - Server Component que faz Promise.all([db.q1, db.q2, ...db.q8]) → todas
+ *   compartilham 1 cliente (não estoura limite de 6 sockets simultâneos).
+ * - Próxima request → React.cache cria cliente fresh (sem socket morto).
+ *
+ * Em Node local (dev), `React.cache` ainda funciona mas como o module-scoped
+ * `_db` também tá disponível, mantém singleton pra performance entre requests.
+ */
+const getCachedDb = cache((): DbInstance => makeDb());
+
 function getDb(): DbInstance {
-  if (!_db) {
-    const client = postgres(process.env.DATABASE_URL!, {
-      prepare: false, // exigido pelo Supabase transaction pooler (6543)
-      max: 20, // dashboard AMS faz ~20 queries paralelas
-      idle_timeout: 20,
-      connect_timeout: 15,
-      max_lifetime: 60 * 30, // 30min — evita conexões zumbis
-    });
-    _db = drizzle(client, { schema });
-  }
+  if (isCloudflareWorker()) return getCachedDb();
+  if (!_db) _db = makeDb();
   return _db;
 }
 
