@@ -668,6 +668,7 @@ export function KanbanBoard({
         <ConversationPopup
           conversationId={openedConvId}
           canEdit={canEdit}
+          currentUserId={currentUserId}
           onClose={() => setOpenedConvId(null)}
         />
       )}

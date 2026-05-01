@@ -7,6 +7,7 @@ import { ConversationView } from "@/components/crm/conversation-view";
 interface Props {
   conversationId: string;
   canEdit: boolean;
+  currentUserId: string;
   onClose: () => void;
 }
 
@@ -14,7 +15,7 @@ interface Props {
  * Modal que embute a ConversationView — acessado via clique no preview da
  * última mensagem no kanban card. Permite ver + responder sem sair do pipeline.
  */
-export function ConversationPopup({ conversationId, canEdit, onClose }: Props) {
+export function ConversationPopup({ conversationId, canEdit, currentUserId, onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -44,6 +45,7 @@ export function ConversationPopup({ conversationId, canEdit, onClose }: Props) {
         <ConversationView
           conversationId={conversationId}
           canEdit={canEdit}
+          currentUserId={currentUserId}
           onBack={onClose}
           onClassificationChange={() => { /* no-op — pipeline não reconcilia classificação */ }}
         />

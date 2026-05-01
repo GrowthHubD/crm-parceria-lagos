@@ -11,6 +11,9 @@ import type { UserRole } from "@/types";
 
 export const metadata: Metadata = { title: "Contratos" };
 
+// Lista de contratos raramente muda — 60s de cache reduz queries.
+export const revalidate = 60;
+
 export default async function ContratosPage() {
   const session = await getServerSession();
   if (!session) redirect("/login");

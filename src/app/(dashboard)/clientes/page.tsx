@@ -10,6 +10,9 @@ import type { UserRole } from "@/types";
 
 export const metadata: Metadata = { title: "Clientes" };
 
+// Lista de clientes raramente muda — 60s de cache reduz queries ao DB.
+export const revalidate = 60;
+
 export default async function ClientesPage() {
   const session = await getServerSession();
   if (!session) redirect("/login");

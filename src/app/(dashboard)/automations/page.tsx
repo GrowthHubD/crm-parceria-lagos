@@ -15,6 +15,9 @@ import { FollowUpList } from "@/components/automations/follow-up-list";
 
 export const metadata: Metadata = { title: "Automações" };
 
+// Lista de automações muda raramente — 60s de cache server-side é seguro.
+export const revalidate = 60;
+
 export default async function AutomationsPage() {
   let tenantCtx;
   try {

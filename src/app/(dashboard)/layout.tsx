@@ -25,7 +25,23 @@ export default function DashboardLayout({
 }) {
   const { data: session, isPending } = useSession();
   const router = useRouter();
-  const [tenantCtx, setTenantCtx] = useState<TenantContext | null>(null);
+  // Inicializa do sessionStorage em renderização lazy — evita flash de "Carregando..."
+  // ao trocar de aba (next.js client-side nav re-mount pode acontecer em alguns casos).
+  const [tenantCtx, setTenantCtx] = useState<TenantContext | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      // Pega qualquer cache de tenant-ctx — se houver vários (raro), o primeiro serve
+      // (o useEffect abaixo valida e re-busca se a sessão mudou).
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i);
+        if (k?.startsWith("tenant-ctx:")) {
+          const v = sessionStorage.getItem(k);
+          if (v) return JSON.parse(v) as TenantContext;
+        }
+      }
+    } catch { /* ignore */ }
+    return null;
+  });
 
   // Redirecionar pro login apenas em produção
   useEffect(() => {
@@ -34,16 +50,34 @@ export default function DashboardLayout({
     }
   }, [session, isPending, router]);
 
-  // Buscar tenant context — funciona sem sessão em dev (API faz fallback)
+  // Buscar tenant context — cache em sessionStorage pra evitar re-fetch em
+  // toda navegação client-side (Next App Router preserva layout entre pages,
+  // mas hard reload + abas múltiplas refazem fetch).
   useEffect(() => {
     if (!session && !isDev) return;
+
+    const cacheKey = session?.user?.id ? `tenant-ctx:${session.user.id}` : null;
+    if (cacheKey) {
+      try {
+        const cached = sessionStorage.getItem(cacheKey);
+        if (cached) {
+          setTenantCtx(JSON.parse(cached));
+          return;
+        }
+      } catch { /* sessionStorage indisponível — segue pro fetch */ }
+    }
 
     fetch("/api/tenant/context")
       .then((res) => {
         if (!res.ok) throw new Error("NO_TENANT");
         return res.json();
       })
-      .then(setTenantCtx)
+      .then((ctx) => {
+        if (cacheKey) {
+          try { sessionStorage.setItem(cacheKey, JSON.stringify(ctx)); } catch { /* quota / disabled */ }
+        }
+        setTenantCtx(ctx);
+      })
       .catch(() => {
         if (!isDev) router.push("/login");
       });

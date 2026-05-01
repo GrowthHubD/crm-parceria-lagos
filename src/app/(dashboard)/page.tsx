@@ -8,7 +8,7 @@ import { contract } from "@/lib/db/schema/contracts";
 import { client } from "@/lib/db/schema/clients";
 import { lead, pipelineStage } from "@/lib/db/schema/pipeline";
 import { financialTransaction } from "@/lib/db/schema/financial";
-import { crmMessage } from "@/lib/db/schema/crm";
+import { crmMessage, crmConversation } from "@/lib/db/schema/crm";
 import { automation, automationLog } from "@/lib/db/schema/automations";
 import { eq, and, gte, lte, desc, count, sum, lt, asc, sql } from "drizzle-orm";
 import { DashboardClient } from "@/components/dashboard/dashboard-client";
@@ -17,6 +17,10 @@ import type { UserRole } from "@/types";
 import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, subMonths, subYears, getYear, differenceInDays } from "date-fns";
 
 export const metadata: Metadata = { title: "Dashboard" };
+
+// ISR: revalida a cada 30s. KPIs do dashboard podem ter ~30s de stale sem
+// problema operacional (não é tela em tempo real — pra isso tem CRM/Pipeline).
+export const revalidate = 30;
 
 export default async function DashboardPage() {
   let tenantCtx;
@@ -82,16 +86,19 @@ async function renderCrmDashboard(tenantId: string) {
       .groupBy(pipelineStage.id, pipelineStage.name, pipelineStage.color, pipelineStage.order)
       .orderBy(asc(pipelineStage.order)),
 
-    // Total mensagens (via conversations do tenant)
-    db.select({ count: count() }).from(crmMessage),
+    // Total mensagens do tenant (via join com conversations)
+    db.select({ count: count() }).from(crmMessage)
+      .innerJoin(crmConversation, eq(crmMessage.conversationId, crmConversation.id))
+      .where(eq(crmConversation.tenantId, tenantId)),
 
     // Automações ativas
     db.select({ count: count() }).from(automation)
       .where(and(eq(automation.tenantId, tenantId), eq(automation.isActive, true))),
 
-    // Logs pendentes
+    // Logs pendentes do tenant
     db.select({ count: count() }).from(automationLog)
-      .where(eq(automationLog.status, "pending")),
+      .innerJoin(automation, eq(automationLog.automationId, automation.id))
+      .where(and(eq(automationLog.status, "pending"), eq(automation.tenantId, tenantId))),
 
     // Leads convertidos com data para calcular tempo médio
     db.select({ createdAt: lead.createdAt, updatedAt: lead.updatedAt }).from(lead)
