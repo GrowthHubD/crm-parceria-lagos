@@ -62,22 +62,38 @@ export interface TriggerConfig {
   tagId?: string; // para tag_added
 }
 
+/** Valida se a string é um IANA timezone aceito pelo runtime. */
+function isValidTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Hora atual (0-23) no timezone dado (default BRT). */
 function hourInTimezone(now: Date, tz: string): number {
-  const s = now.toLocaleString("en-US", {
-    timeZone: tz,
-    hour: "2-digit",
-    hour12: false,
-  });
-  // "24" às vezes aparece em vez de "00" em alguns engines
-  const h = parseInt(s, 10);
-  return h === 24 ? 0 : h;
+  try {
+    const s = now.toLocaleString("en-US", {
+      timeZone: tz,
+      hour: "2-digit",
+      hour12: false,
+    });
+    // "24" às vezes aparece em vez de "00" em alguns engines
+    const h = parseInt(s, 10);
+    if (Number.isNaN(h)) return now.getUTCHours();
+    return h === 24 ? 0 : h;
+  } catch {
+    return now.getUTCHours();
+  }
 }
 
 /** Verifica se `now` está dentro da janela configurada. Sem janela → sempre true. */
 function isInSendWindow(w: SendWindow | undefined, now: Date): boolean {
   if (!w) return true;
-  const tz = w.timezone ?? "America/Sao_Paulo";
+  const requestedTz = w.timezone ?? "America/Sao_Paulo";
+  const tz = isValidTimezone(requestedTz) ? requestedTz : "America/Sao_Paulo";
   const h = hourInTimezone(now, tz);
   // Janela normal: start < end. Ex: 9..18 → 9,10,...,17
   if (w.startHour < w.endHour) return h >= w.startHour && h < w.endHour;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getTenantContext } from "@/lib/tenant";
 import { checkPermission } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { kanbanColumn, kanbanTask } from "@/lib/db/schema/kanban";
@@ -9,26 +9,27 @@ import type { UserRole } from "@/types";
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const ctx = await getTenantContext(request.headers).catch(() => null);
+    if (!ctx) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    const canView = await checkPermission(session.user.id, userRole, "kanban", "view");
+    const userRole = ctx.role as UserRole;
+    const canView = await checkPermission(ctx.userId, userRole, "kanban", "view", ctx);
     if (!canView) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
     const columns = await db
       .select()
       .from(kanbanColumn)
+      .where(eq(kanbanColumn.tenantId, ctx.tenantId))
       .orderBy(asc(kanbanColumn.order));
 
     // Operational users only see their own tasks
-    const isOperational = userRole === "operational";
+    const isOperational = userRole === "operational" || userRole === "operator";
 
     // Filtro por leadId (opcional — usado ao visualizar tarefas de um lead)
     const leadIdParam = request.nextUrl.searchParams.get("leadId");
 
-    const whereConditions = [];
-    if (isOperational) whereConditions.push(eq(kanbanTask.assignedTo, session.user.id));
+    const whereConditions = [eq(kanbanTask.tenantId, ctx.tenantId)];
+    if (isOperational) whereConditions.push(eq(kanbanTask.assignedTo, ctx.userId));
     if (leadIdParam) whereConditions.push(eq(kanbanTask.leadId, leadIdParam));
 
     const tasks = await db
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest) {
       })
       .from(kanbanTask)
       .leftJoin(user, eq(kanbanTask.assignedTo, user.id))
-      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+      .where(and(...whereConditions))
       .orderBy(asc(kanbanTask.order), desc(kanbanTask.createdAt));
 
     const allUsers = await db

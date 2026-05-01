@@ -421,6 +421,17 @@ export function TasksBoard({ initialColumns, initialTasks, users, leads, current
         </div>
 
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          {/* Botão primário: criar nova tarefa (na 1ª coluna por default) */}
+          {canEdit && columns[0] && (
+            <button
+              onClick={() => handleAddTask(columns[0].id)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-hover transition-colors cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              Nova tarefa
+            </button>
+          )}
+
           {/* Filtro por data */}
           {["all", "today", "week"].map((f) => (
             <button

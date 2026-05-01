@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { getTenantContext } from "@/lib/tenant";
 import { checkPermission } from "@/lib/permissions";
 import { db } from "@/lib/db";
-import { kanbanTask } from "@/lib/db/schema/kanban";
+import { kanbanTask, kanbanColumn } from "@/lib/db/schema/kanban";
 import { userGoogleIntegration } from "@/lib/db/schema/users";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { updateCalendarEvent, deleteCalendarEvent } from "@/lib/google-calendar";
 import type { UserRole } from "@/types";
 
@@ -26,11 +26,11 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const ctx = await getTenantContext(request.headers).catch(() => null);
+    if (!ctx) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    const canEdit = await checkPermission(session.user.id, userRole, "kanban", "edit");
+    const userRole = ctx.role as UserRole;
+    const canEdit = await checkPermission(ctx.userId, userRole, "kanban", "edit", ctx);
     if (!canEdit) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
     const body = await request.json();
@@ -39,11 +39,11 @@ export async function PATCH(
       return NextResponse.json({ error: "Dados inválidos", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    // Fetch existing task for Calendar sync
+    // Fetch existing task — exige tenant match pra evitar cross-tenant edit
     const [existing] = await db
       .select()
       .from(kanbanTask)
-      .where(eq(kanbanTask.id, id))
+      .where(and(eq(kanbanTask.id, id), eq(kanbanTask.tenantId, ctx.tenantId)))
       .limit(1);
     if (!existing) return NextResponse.json({ error: "Tarefa não encontrada" }, { status: 404 });
 
@@ -52,7 +52,16 @@ export async function PATCH(
 
     if (d.title !== undefined) updates.title = d.title;
     if (d.description !== undefined) updates.description = d.description;
-    if (d.columnId !== undefined) updates.columnId = d.columnId;
+    if (d.columnId !== undefined) {
+      // Coluna destino também tem que pertencer ao tenant
+      const [col] = await db
+        .select({ id: kanbanColumn.id })
+        .from(kanbanColumn)
+        .where(and(eq(kanbanColumn.id, d.columnId), eq(kanbanColumn.tenantId, ctx.tenantId)))
+        .limit(1);
+      if (!col) return NextResponse.json({ error: "Coluna destino inválida" }, { status: 400 });
+      updates.columnId = d.columnId;
+    }
     if (d.assignedTo !== undefined) updates.assignedTo = d.assignedTo;
     if (d.dueDate !== undefined) updates.dueDate = d.dueDate;
     if (d.priority !== undefined) updates.priority = d.priority;
@@ -65,7 +74,7 @@ export async function PATCH(
     const [updated] = await db
       .update(kanbanTask)
       .set(updates)
-      .where(eq(kanbanTask.id, id))
+      .where(and(eq(kanbanTask.id, id), eq(kanbanTask.tenantId, ctx.tenantId)))
       .returning();
 
     // Sync to Google Calendar (best-effort, only when title/dueDate/priority changed)
@@ -101,23 +110,23 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const ctx = await getTenantContext(request.headers).catch(() => null);
+    if (!ctx) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    const canDelete = await checkPermission(session.user.id, userRole, "kanban", "delete");
+    const userRole = ctx.role as UserRole;
+    const canDelete = await checkPermission(ctx.userId, userRole, "kanban", "delete", ctx);
     if (!canDelete) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
-    // Fetch before delete for Calendar cleanup
+    // Fetch before delete (escopado pelo tenant) for Calendar cleanup
     const [existing] = await db
       .select()
       .from(kanbanTask)
-      .where(eq(kanbanTask.id, id))
+      .where(and(eq(kanbanTask.id, id), eq(kanbanTask.tenantId, ctx.tenantId)))
       .limit(1);
 
     const [deleted] = await db
       .delete(kanbanTask)
-      .where(eq(kanbanTask.id, id))
+      .where(and(eq(kanbanTask.id, id), eq(kanbanTask.tenantId, ctx.tenantId)))
       .returning({ id: kanbanTask.id });
 
     if (!deleted) return NextResponse.json({ error: "Tarefa não encontrada" }, { status: 404 });

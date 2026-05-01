@@ -79,10 +79,19 @@ export default async function TasksPage() {
       .orderBy(desc(lead.createdAt)),
   ]);
 
+  // Serializa Date → ISO string pra cruzar boundary server→client
+  const tasksSerialized = tasks.map((t) => ({
+    ...t,
+    createdAt: t.createdAt instanceof Date ? t.createdAt.toISOString() : (t.createdAt as unknown as string),
+    updatedAt: t.updatedAt instanceof Date ? t.updatedAt.toISOString() : (t.updatedAt as unknown as string),
+    completedAt: t.completedAt instanceof Date ? t.completedAt.toISOString() : (t.completedAt as unknown as string | null),
+    dueDate: t.dueDate instanceof Date ? t.dueDate.toISOString() : (t.dueDate as unknown as string | null),
+  }));
+
   return (
     <TasksBoard
       initialColumns={columns}
-      initialTasks={tasks}
+      initialTasks={tasksSerialized}
       users={activeUsers}
       leads={tenantLeads}
       currentUserId={tenantCtx.userId}

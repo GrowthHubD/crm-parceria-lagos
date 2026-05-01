@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { getTenantContext } from "@/lib/tenant";
 import { checkPermission } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { kanbanTask, kanbanColumn } from "@/lib/db/schema/kanban";
 import { userGoogleIntegration } from "@/lib/db/schema/users";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createCalendarEvent } from "@/lib/google-calendar";
 import type { UserRole } from "@/types";
 
@@ -22,11 +22,11 @@ const createSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const ctx = await getTenantContext(request.headers).catch(() => null);
+    if (!ctx) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    const canEdit = await checkPermission(session.user.id, userRole, "kanban", "edit");
+    const userRole = ctx.role as UserRole;
+    const canEdit = await checkPermission(ctx.userId, userRole, "kanban", "edit", ctx);
     if (!canEdit) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
     const body = await request.json();
@@ -37,16 +37,18 @@ export async function POST(request: NextRequest) {
 
     const d = parsed.data;
 
+    // Coluna deve existir e pertencer ao tenant do user
     const [col] = await db
       .select({ id: kanbanColumn.id })
       .from(kanbanColumn)
-      .where(eq(kanbanColumn.id, d.columnId))
+      .where(and(eq(kanbanColumn.id, d.columnId), eq(kanbanColumn.tenantId, ctx.tenantId)))
       .limit(1);
     if (!col) return NextResponse.json({ error: "Coluna não encontrada" }, { status: 404 });
 
     const [task] = await db
       .insert(kanbanTask)
       .values({
+        tenantId: ctx.tenantId,
         title: d.title,
         description: d.description ?? null,
         columnId: d.columnId,
@@ -54,7 +56,7 @@ export async function POST(request: NextRequest) {
         dueDate: d.dueDate ?? null,
         priority: d.priority,
         leadId: d.leadId ?? null,
-        createdBy: session.user.id,
+        createdBy: ctx.userId,
       })
       .returning();
 
