@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { checkPermission } from "@/lib/permissions";
+import { getTenantContext } from "@/lib/tenant";
 import { db } from "@/lib/db";
-import { user } from "@/lib/db/schema/users";
+import { user, userTenant } from "@/lib/db/schema/users";
 import { modulePermission } from "@/lib/db/schema/users";
 import { eq, asc } from "drizzle-orm";
 import type { UserRole } from "@/types";
@@ -18,11 +18,10 @@ const createSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const ctx = await getTenantContext(request.headers).catch(() => null);
+    if (!ctx) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    const canView = await checkPermission(session.user.id, userRole, "admin", "view");
+    const canView = await checkPermission(ctx.userId, ctx.role as UserRole, "admin", "view", ctx);
     if (!canView) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
     const users = await db
@@ -50,11 +49,10 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const ctx = await getTenantContext(request.headers).catch(() => null);
+    if (!ctx) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    const canEdit = await checkPermission(session.user.id, userRole, "admin", "edit");
+    const canEdit = await checkPermission(ctx.userId, ctx.role as UserRole, "admin", "edit", ctx);
     if (!canEdit) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
     const body = await request.json();
@@ -103,6 +101,15 @@ export async function POST(request: NextRequest) {
       phone: user.phone,
       isActive: user.isActive,
       createdAt: user.createdAt,
+    });
+
+    // Vincula ao tenant atual (sem essa linha o user loga mas /api/tenant/context
+    // retorna NO_TENANT_ACCESS e o dashboard redireciona pro /login).
+    await db.insert(userTenant).values({
+      userId: createData.user.id,
+      tenantId: ctx.tenantId,
+      role,
+      isDefault: true,
     });
 
     return NextResponse.json({ user: created }, { status: 201 });

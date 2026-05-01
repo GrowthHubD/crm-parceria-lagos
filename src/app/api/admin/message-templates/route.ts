@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+import { getTenantContext } from "@/lib/tenant";
 import { db } from "@/lib/db";
 import { messageTemplate } from "@/lib/db/schema/settings";
 import { eq } from "drizzle-orm";
@@ -33,11 +33,13 @@ export const TEMPLATE_VARIABLES: Record<string, string[]> = {
 /** GET — return all templates (merged with defaults for missing rows) */
 export async function GET() {
   try {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const ctx = await getTenantContext(await headers()).catch(() => null);
+    if (!ctx) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    if (userRole !== "partner") return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+    const role = ctx.role as UserRole;
+    if (role !== "partner" && role !== "superadmin" && role !== "admin") {
+      return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+    }
 
     let rows: typeof TEMPLATE_DEFAULTS = [];
     try {
@@ -73,11 +75,13 @@ export async function GET() {
 /** PATCH — upsert one template */
 export async function PATCH(request: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const ctx = await getTenantContext(await headers()).catch(() => null);
+    if (!ctx) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    if (userRole !== "partner") return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+    const role = ctx.role as UserRole;
+    if (role !== "partner" && role !== "superadmin" && role !== "admin") {
+      return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+    }
 
     const body = await request.json();
     const { id, templateBody } = body as { id: string; templateBody: string };
@@ -101,14 +105,14 @@ export async function PATCH(request: NextRequest) {
     if (existing.length > 0) {
       await db
         .update(messageTemplate)
-        .set({ body: templateBody.trim(), updatedAt: new Date(), updatedBy: session.user.id })
+        .set({ body: templateBody.trim(), updatedAt: new Date(), updatedBy: ctx.userId })
         .where(eq(messageTemplate.id, id));
     } else {
       await db.insert(messageTemplate).values({
         id,
         label,
         body: templateBody.trim(),
-        updatedBy: session.user.id,
+        updatedBy: ctx.userId,
       });
     }
 
@@ -122,11 +126,13 @@ export async function PATCH(request: NextRequest) {
 /** DELETE — reset one template to default */
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const ctx = await getTenantContext(await headers()).catch(() => null);
+    if (!ctx) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    if (userRole !== "partner") return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+    const role = ctx.role as UserRole;
+    if (role !== "partner" && role !== "superadmin" && role !== "admin") {
+      return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+    }
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");

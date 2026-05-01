@@ -5,6 +5,15 @@ import { user, userTenant } from "./db/schema/users";
 import { tenant } from "./db/schema/tenants";
 import type { ReadonlyHeaders } from "next/dist/server/web/spec-extension/adapters/headers";
 
+type CfCtx = { env?: { AUTH_CACHE?: { get(k: string): Promise<string | null>; put(k: string, v: string, o?: { expirationTtl?: number }): Promise<void> } } };
+
+function getTenantKV() {
+  try {
+    const ctx = (globalThis as Record<symbol, CfCtx | undefined>)[Symbol.for("__cloudflare-context__")];
+    return ctx?.env?.AUTH_CACHE ?? null;
+  } catch { return null; }
+}
+
 export interface TenantContext {
   tenantId: string;
   tenantSlug: string;
@@ -13,7 +22,12 @@ export interface TenantContext {
   userId: string;
 }
 
-const isDev = process.env.NODE_ENV === "development";
+// Bypass de auth pra dev local. Exige duas condições — NODE_ENV=development
+// E ALLOW_DEV_AUTH_BYPASS=true — pra impedir que setar NODE_ENV em prod por
+// engano abra a porta. ALLOW_DEV_AUTH_BYPASS NUNCA deve existir em secrets CF.
+const isDev =
+  process.env.NODE_ENV === "development" &&
+  process.env.ALLOW_DEV_AUTH_BYPASS === "true";
 
 /**
  * Retorna o primeiro superadmin do banco para uso em dev mode.
@@ -82,7 +96,38 @@ export async function getTenantContext(
 
   if (!session) throw new Error("UNAUTHENTICATED");
 
+  // Cache de tenant context no KV — evita round-trip ao banco em toda navegação
+  const kv = getTenantKV();
+  const tenantCacheKey = kv ? `tenant:${session.user.id}` : null;
+  if (kv && tenantCacheKey) {
+    try {
+      const cached = await kv.get(tenantCacheKey);
+      if (cached) return JSON.parse(cached) as TenantContext;
+    } catch { /* cache miss */ }
+  }
+
   const tenantOverride = headers.get("x-tenant-id");
+
+  // Override só vale se o user tem role 'superadmin' em ALGUM tenant
+  // (tipicamente o GH platform owner). Sem essa checagem, qualquer user
+  // autenticado pode forjar X-Tenant-Id e operar em tenants alheios desde
+  // que algum row em user_tenant case (ex.: convidado num tenant secundário).
+  let allowOverride = false;
+  if (tenantOverride) {
+    const [supercheck] = await db
+      .select({ id: userTenant.id })
+      .from(userTenant)
+      .where(
+        and(
+          eq(userTenant.userId, session.user.id),
+          eq(userTenant.role, "superadmin")
+        )
+      )
+      .limit(1);
+    allowOverride = Boolean(supercheck);
+  }
+
+  const useOverride = tenantOverride && allowOverride;
 
   const [row] = await db
     .select({
@@ -94,10 +139,10 @@ export async function getTenantContext(
     .from(userTenant)
     .innerJoin(tenant, eq(userTenant.tenantId, tenant.id))
     .where(
-      tenantOverride
+      useOverride
         ? and(
             eq(userTenant.userId, session.user.id),
-            eq(tenant.id, tenantOverride)
+            eq(tenant.id, tenantOverride!)
           )
         : and(
             eq(userTenant.userId, session.user.id),
@@ -111,13 +156,22 @@ export async function getTenantContext(
     throw new Error("NO_TENANT_ACCESS");
   }
 
-  return {
+  const ctx: TenantContext = {
     tenantId: row.tenantId,
     tenantSlug: row.tenantSlug,
     isPlatformOwner: row.isPlatformOwner,
     role: row.role,
     userId: session.user.id,
   };
+
+  // Salva no KV pra próximas requests (30s TTL)
+  if (kv && tenantCacheKey) {
+    try {
+      await kv.put(tenantCacheKey, JSON.stringify(ctx), { expirationTtl: 30 });
+    } catch { /* falha no cache não é crítica */ }
+  }
+
+  return ctx;
 }
 
 /**

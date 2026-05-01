@@ -46,6 +46,8 @@ export const signIn = {
 export async function signOut() {
   const { error } = await supabase().auth.signOut();
   if (typeof window !== "undefined") {
+    // Limpa cache do tenant ctx pra próximo login não pegar stale
+    try { sessionStorage.clear(); } catch { /* ignore */ }
     // força re-render da árvore
     window.location.href = "/login";
   }

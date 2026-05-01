@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { checkPermission } from "@/lib/permissions";
+import { getTenantContext } from "@/lib/tenant";
 import { db } from "@/lib/db";
 import { user } from "@/lib/db/schema/users";
 import { eq } from "drizzle-orm";
@@ -21,15 +21,14 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const ctx = await getTenantContext(request.headers).catch(() => null);
+    if (!ctx) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-    const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
-    const canEdit = await checkPermission(session.user.id, userRole, "admin", "edit");
+    const canEdit = await checkPermission(ctx.userId, ctx.role as UserRole, "admin", "edit", ctx);
     if (!canEdit) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
     // Prevent demoting yourself
-    if (id === session.user.id) {
+    if (id === ctx.userId) {
       return NextResponse.json({ error: "Não é possível editar sua própria conta por aqui" }, { status: 400 });
     }
 

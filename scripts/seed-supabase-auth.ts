@@ -17,7 +17,7 @@ const ALEXANDRE_TENANT_ID = "00000000-0000-0000-0000-000000000002";
 const INITIAL_USERS = [
   {
     email: "method.growth.hub@gmail.com",
-    password: "MudeEssaSenha123!",
+    password: "heliogato123",
     name: "Growth Hub Admin",
     role: "partner" as const,
     tenants: [
@@ -44,6 +44,14 @@ async function main() {
     max: 1,
   });
 
+  // Garante que o GH tenant exista (o seed-initial pode não ter rodado)
+  await sql`
+    INSERT INTO public.tenant (id, name, slug, is_platform_owner, status, plan)
+    VALUES (${GH_TENANT_ID}, 'Growth Hub', 'gh', true, 'active', 'enterprise')
+    ON CONFLICT (id) DO NOTHING;
+  `;
+  console.log(`✓ Tenant GH garantido (${GH_TENANT_ID.slice(-4)})`);
+
   for (const u of INITIAL_USERS) {
     console.log(`\n→ Processando ${u.email}...`);
 
@@ -56,6 +64,16 @@ async function main() {
     if (existingRows[0]?.id) {
       userId = existingRows[0].id as string;
       console.log(`  ✓ Já existe em auth.users: ${userId}`);
+      // Rotaciona a senha pra garantir que a credencial declarada acima vale.
+      const { error: updErr } = await admin.auth.admin.updateUserById(userId, {
+        password: u.password,
+        email_confirm: true,
+      });
+      if (updErr) {
+        console.error(`  ✗ Falha ao atualizar senha: ${updErr.message}`);
+      } else {
+        console.log(`  ✓ Senha atualizada`);
+      }
     } else {
       const { data, error } = await admin.auth.admin.createUser({
         email: u.email,
@@ -82,8 +100,13 @@ async function main() {
     `;
     console.log(`  ✓ Espelhado em public.user`);
 
-    // Vincula aos tenants
+    // Vincula aos tenants — skipa graciosamente se tenant não existe
     for (const t of u.tenants) {
+      const exists = await sql`SELECT id FROM public.tenant WHERE id = ${t.tenantId} LIMIT 1;`;
+      if (!exists[0]) {
+        console.log(`  · Tenant ${t.tenantId.slice(-4)} não existe — skip.`);
+        continue;
+      }
       await sql`
         INSERT INTO public.user_tenant (user_id, tenant_id, role, is_default)
         VALUES (${userId}, ${t.tenantId}, ${t.role}, ${t.isDefault})

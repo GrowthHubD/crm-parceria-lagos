@@ -93,7 +93,7 @@ export async function provisionClient(
 
   // 3) Cria instância WhatsApp (Uazapi em prod, Evolution em dev)
   const instanceId = instanceIdFromSlug(slug);
-  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/${
+  const webhookUrl = `${process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/webhooks/${
     process.env.NODE_ENV === "production" ? "uazapi/v2" : "evolution"
   }`;
 
@@ -203,7 +203,7 @@ export async function provisionClient(
           .onConflictDoNothing();
 
         // Gera magic link (redireciona pra /onboarding/whatsapp após login)
-        const redirect = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/onboarding/whatsapp`;
+        const redirect = `${process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/onboarding/whatsapp`;
         const { data: linkData, error: linkError } = await supa.auth.admin.generateLink({
           type: "magiclink",
           email: input.adminEmail,
