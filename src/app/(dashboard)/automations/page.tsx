@@ -6,7 +6,7 @@ import { checkPermission } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { automation, automationStep } from "@/lib/db/schema/automations";
 import { pipelineStage, leadTag } from "@/lib/db/schema/pipeline";
-import { eq, asc, desc } from "drizzle-orm";
+import { eq, asc, desc, inArray } from "drizzle-orm";
 import type { UserRole } from "@/types";
 import { AutomationsList } from "@/components/automations/automations-list";
 import { QuickAutomationSetup } from "@/components/automations/quick-setup";
@@ -33,13 +33,12 @@ export default async function AutomationsPage() {
   ]);
   if (!canView) redirect("/");
 
-  const [automations, allSteps, stages, tags] = await Promise.all([
+  const [automations, stages, tags] = await Promise.all([
     db
       .select()
       .from(automation)
       .where(eq(automation.tenantId, tenantCtx.tenantId))
       .orderBy(desc(automation.createdAt)),
-    db.select().from(automationStep).orderBy(asc(automationStep.order)),
     db
       .select({ id: pipelineStage.id, name: pipelineStage.name })
       .from(pipelineStage)
@@ -51,6 +50,16 @@ export default async function AutomationsPage() {
       .where(eq(leadTag.tenantId, tenantCtx.tenantId))
       .orderBy(asc(leadTag.name)),
   ]);
+
+  // Steps são escopados via automationId — busca apenas os das automations do tenant.
+  const automationIds = automations.map((a) => a.id);
+  const allSteps = automationIds.length > 0
+    ? await db
+        .select()
+        .from(automationStep)
+        .where(inArray(automationStep.automationId, automationIds))
+        .orderBy(asc(automationStep.order))
+    : [];
 
   const automationsWithSteps = automations.map((a) => ({
     ...a,

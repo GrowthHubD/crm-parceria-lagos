@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/auth-server";
 import { checkPermission } from "@/lib/permissions";
+import { getTenantContext } from "@/lib/tenant";
 import { db } from "@/lib/db";
 import { financialTransaction, financialConfig } from "@/lib/db/schema/financial";
-import { user } from "@/lib/db/schema/users";
+import { user, userTenant } from "@/lib/db/schema/users";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { FinancialSummary } from "@/components/financeiro/financial-summary";
 import { TransactionList } from "@/components/financeiro/transaction-list";
@@ -20,13 +22,22 @@ export default async function FinanceiroPage() {
 
   const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
 
+  let tenantCtx;
+  try {
+    tenantCtx = await getTenantContext(await headers());
+  } catch {
+    redirect("/login");
+  }
+
   const [canView, canEdit, canDelete] = await Promise.all([
-    checkPermission(session.user.id, userRole, "financial", "view"),
-    checkPermission(session.user.id, userRole, "financial", "edit"),
-    checkPermission(session.user.id, userRole, "financial", "delete"),
+    checkPermission(session.user.id, userRole, "financial", "view", tenantCtx),
+    checkPermission(session.user.id, userRole, "financial", "edit", tenantCtx),
+    checkPermission(session.user.id, userRole, "financial", "delete", tenantCtx),
   ]);
 
   if (!canView) redirect("/");
+
+  const tenantId = tenantCtx.tenantId;
 
   const now = new Date();
   const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
@@ -38,6 +49,7 @@ export default async function FinanceiroPage() {
       .from(financialTransaction)
       .where(
         and(
+          eq(financialTransaction.tenantId, tenantId),
           gte(financialTransaction.transactionDate, monthStart),
           lte(financialTransaction.transactionDate, monthEnd)
         )
@@ -46,12 +58,20 @@ export default async function FinanceiroPage() {
     db
       .select()
       .from(financialConfig)
+      .where(eq(financialConfig.tenantId, tenantId))
       .orderBy(desc(financialConfig.updatedAt))
       .limit(1),
     db
       .select({ id: user.id })
       .from(user)
-      .where(and(eq(user.role, "partner"), eq(user.isActive, true))),
+      .innerJoin(userTenant, eq(userTenant.userId, user.id))
+      .where(
+        and(
+          eq(userTenant.tenantId, tenantId),
+          eq(user.role, "partner"),
+          eq(user.isActive, true)
+        )
+      ),
   ]);
 
   const cfg = config[0];

@@ -80,7 +80,8 @@ export default async function PipelinePage() {
         tagColor: leadTag.color,
       })
       .from(leadTagAssignment)
-      .innerJoin(leadTag, eq(leadTagAssignment.tagId, leadTag.id)),
+      // innerJoin com filtro tenantId no leadTag — só assignments cuja tag pertence ao tenant.
+      .innerJoin(leadTag, and(eq(leadTagAssignment.tagId, leadTag.id), eq(leadTag.tenantId, tenantCtx.tenantId))),
     db
       .select({ id: user.id, name: user.name })
       .from(user)

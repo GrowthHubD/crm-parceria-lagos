@@ -40,7 +40,7 @@ export default async function DashboardPage() {
   }
 
   // Se É platform owner → Dashboard AMS (financeiro)
-  return renderAmsDashboard(tenantCtx.userId, userRole);
+  return renderAmsDashboard(tenantCtx.tenantId, tenantCtx.userId, userRole);
 }
 
 // ============================================
@@ -151,7 +151,10 @@ async function renderCrmDashboard(tenantId: string) {
 // Dashboard AMS (tenant GH — financeiro)
 // ============================================
 
-async function renderAmsDashboard(userId: string, userRole: UserRole) {
+async function renderAmsDashboard(tenantId: string, userId: string, userRole: UserRole) {
+  // Suprime "unused" sem alterar a assinatura — userId/userRole ficam aqui
+  // pra futuras checagens (ex.: filtros por agente).
+  void userId; void userRole;
   const now = new Date();
   const yearNum = getYear(now);
 
@@ -184,32 +187,32 @@ async function renderAmsDashboard(userId: string, userRole: UserRole) {
     clientContracts,
   ] = await Promise.all([
     db.select({ total: sum(financialTransaction.amount) }).from(financialTransaction)
-      .where(and(eq(financialTransaction.type, "income"), eq(financialTransaction.status, "paid"),
+      .where(and(eq(financialTransaction.tenantId, tenantId), eq(financialTransaction.type, "income"), eq(financialTransaction.status, "paid"),
         gte(financialTransaction.transactionDate, monthStart), lte(financialTransaction.transactionDate, monthEnd))),
     db.select({ total: sum(financialTransaction.amount) }).from(financialTransaction)
-      .where(and(eq(financialTransaction.type, "expense"), eq(financialTransaction.status, "paid"),
+      .where(and(eq(financialTransaction.tenantId, tenantId), eq(financialTransaction.type, "expense"), eq(financialTransaction.status, "paid"),
         gte(financialTransaction.transactionDate, monthStart), lte(financialTransaction.transactionDate, monthEnd))),
     db.select({ total: sum(financialTransaction.amount) }).from(financialTransaction)
-      .where(and(eq(financialTransaction.type, "income"), eq(financialTransaction.status, "pending"))),
+      .where(and(eq(financialTransaction.tenantId, tenantId), eq(financialTransaction.type, "income"), eq(financialTransaction.status, "pending"))),
     db.select({ total: sum(financialTransaction.amount) }).from(financialTransaction)
-      .where(and(eq(financialTransaction.type, "income"), eq(financialTransaction.status, "overdue"))),
+      .where(and(eq(financialTransaction.tenantId, tenantId), eq(financialTransaction.type, "income"), eq(financialTransaction.status, "overdue"))),
     db.select({ total: sum(financialTransaction.amount) }).from(financialTransaction)
-      .where(and(eq(financialTransaction.type, "income"),
+      .where(and(eq(financialTransaction.tenantId, tenantId), eq(financialTransaction.type, "income"),
         gte(financialTransaction.transactionDate, yearStart), lte(financialTransaction.transactionDate, yearEnd))),
     db.select({ total: sum(financialTransaction.amount) }).from(financialTransaction)
-      .where(and(eq(financialTransaction.type, "income"), eq(financialTransaction.status, "paid"),
+      .where(and(eq(financialTransaction.tenantId, tenantId), eq(financialTransaction.type, "income"), eq(financialTransaction.status, "paid"),
         gte(financialTransaction.transactionDate, yearStart), lte(financialTransaction.transactionDate, yearEnd))),
     db.select({ total: sum(financialTransaction.amount) }).from(financialTransaction)
-      .where(and(eq(financialTransaction.type, "income"), eq(financialTransaction.status, "pending"),
+      .where(and(eq(financialTransaction.tenantId, tenantId), eq(financialTransaction.type, "income"), eq(financialTransaction.status, "pending"),
         gte(financialTransaction.transactionDate, yearStart), lte(financialTransaction.transactionDate, yearEnd))),
     db.select({ total: sum(financialTransaction.amount) }).from(financialTransaction)
-      .where(and(eq(financialTransaction.type, "income"), eq(financialTransaction.status, "paid"),
+      .where(and(eq(financialTransaction.tenantId, tenantId), eq(financialTransaction.type, "income"), eq(financialTransaction.status, "paid"),
         gte(financialTransaction.transactionDate, prevYearStart), lte(financialTransaction.transactionDate, prevYearEnd))),
     db.select({ total: sum(financialTransaction.amount) }).from(financialTransaction)
-      .where(and(eq(financialTransaction.type, "income"), eq(financialTransaction.status, "paid"),
+      .where(and(eq(financialTransaction.tenantId, tenantId), eq(financialTransaction.type, "income"), eq(financialTransaction.status, "paid"),
         gte(financialTransaction.transactionDate, prevMonthStart), lte(financialTransaction.transactionDate, prevMonthEnd))),
     db.select({ total: sum(financialTransaction.amount) }).from(financialTransaction)
-      .where(and(eq(financialTransaction.type, "income"), eq(financialTransaction.status, "paid"),
+      .where(and(eq(financialTransaction.tenantId, tenantId), eq(financialTransaction.type, "income"), eq(financialTransaction.status, "paid"),
         gte(financialTransaction.transactionDate, prevYearSameMonthStart), lte(financialTransaction.transactionDate, prevYearSameMonthEnd))),
     db.select({ mrr: sum(contract.monthlyValue), count: count() }).from(contract)
       .where(eq(contract.status, "active")),

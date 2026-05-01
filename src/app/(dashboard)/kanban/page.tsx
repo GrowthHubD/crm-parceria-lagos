@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/auth-server";
 import { checkPermission } from "@/lib/permissions";
+import { getTenantContext } from "@/lib/tenant";
 import { db } from "@/lib/db";
 import { kanbanColumn, kanbanTask } from "@/lib/db/schema/kanban";
-import { user } from "@/lib/db/schema/users";
+import { user, userTenant } from "@/lib/db/schema/users";
 import { eq, asc, and, desc } from "drizzle-orm";
 import { KanbanBoard } from "@/components/kanban/kanban-board";
 import type { UserRole } from "@/types";
@@ -15,20 +17,35 @@ export default async function KanbanPage() {
   const session = await getServerSession();
   if (!session) redirect("/login");
 
+  let tenantCtx;
+  try {
+    tenantCtx = await getTenantContext(await headers());
+  } catch {
+    redirect("/login");
+  }
+
   const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
 
   const [canView, canEdit, canDelete] = await Promise.all([
-    checkPermission(session.user.id, userRole, "kanban", "view"),
-    checkPermission(session.user.id, userRole, "kanban", "edit"),
-    checkPermission(session.user.id, userRole, "kanban", "delete"),
+    checkPermission(session.user.id, userRole, "kanban", "view", tenantCtx),
+    checkPermission(session.user.id, userRole, "kanban", "edit", tenantCtx),
+    checkPermission(session.user.id, userRole, "kanban", "delete", tenantCtx),
   ]);
 
   if (!canView) redirect("/");
 
   const isOperational = userRole === "operational";
 
+  // Filtros base de tenant (sempre aplicados nas tabelas com tenantId)
+  const taskConditions = [eq(kanbanTask.tenantId, tenantCtx.tenantId)];
+  if (isOperational) taskConditions.push(eq(kanbanTask.assignedTo, session.user.id));
+
   const [columns, tasks, activeUsers] = await Promise.all([
-    db.select().from(kanbanColumn).orderBy(asc(kanbanColumn.order)),
+    db
+      .select()
+      .from(kanbanColumn)
+      .where(eq(kanbanColumn.tenantId, tenantCtx.tenantId))
+      .orderBy(asc(kanbanColumn.order)),
     db
       .select({
         id: kanbanTask.id,
@@ -44,9 +61,14 @@ export default async function KanbanPage() {
       })
       .from(kanbanTask)
       .leftJoin(user, eq(kanbanTask.assignedTo, user.id))
-      .where(isOperational ? eq(kanbanTask.assignedTo, session.user.id) : undefined)
+      .where(and(...taskConditions))
       .orderBy(asc(kanbanTask.order), desc(kanbanTask.createdAt)),
-    db.select({ id: user.id, name: user.name }).from(user).where(eq(user.isActive, true)),
+    // Apenas users que têm vínculo com este tenant — evita listar users de outros tenants.
+    db
+      .select({ id: user.id, name: user.name })
+      .from(user)
+      .innerJoin(userTenant, eq(userTenant.userId, user.id))
+      .where(and(eq(userTenant.tenantId, tenantCtx.tenantId), eq(user.isActive, true))),
   ]);
 
   return (

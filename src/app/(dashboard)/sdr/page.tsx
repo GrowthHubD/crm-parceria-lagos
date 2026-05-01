@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/auth-server";
 import { checkPermission } from "@/lib/permissions";
+import { getTenantContext } from "@/lib/tenant";
 import { db } from "@/lib/db";
 import { sdrAgent, sdrMetricSnapshot } from "@/lib/db/schema/sdr";
-import { eq, desc, asc } from "drizzle-orm";
+import { eq, desc, asc, and } from "drizzle-orm";
 import { SdrDashboard } from "@/components/sdr/sdr-dashboard";
 import type { UserRole } from "@/types";
 
@@ -14,17 +16,28 @@ export default async function SdrPage() {
   const session = await getServerSession();
   if (!session) redirect("/login");
 
+  let tenantCtx;
+  try {
+    tenantCtx = await getTenantContext(await headers());
+  } catch {
+    redirect("/login");
+  }
+
   const userRole = ((session.user as { role?: string }).role ?? "operational") as UserRole;
 
   const [canView, canEdit] = await Promise.all([
-    checkPermission(session.user.id, userRole, "sdr", "view"),
-    checkPermission(session.user.id, userRole, "sdr", "edit"),
+    checkPermission(session.user.id, userRole, "sdr", "view", tenantCtx),
+    checkPermission(session.user.id, userRole, "sdr", "edit", tenantCtx),
   ]);
 
   if (!canView) redirect("/");
 
   const [agents, metrics] = await Promise.all([
-    db.select().from(sdrAgent).orderBy(asc(sdrAgent.name)),
+    db
+      .select()
+      .from(sdrAgent)
+      .where(eq(sdrAgent.tenantId, tenantCtx.tenantId))
+      .orderBy(asc(sdrAgent.name)),
     db
       .select({
         id: sdrMetricSnapshot.id,
@@ -52,7 +65,8 @@ export default async function SdrPage() {
         dropoffStageData: sdrMetricSnapshot.dropoffStageData,
       })
       .from(sdrMetricSnapshot)
-      .leftJoin(sdrAgent, eq(sdrMetricSnapshot.agentId, sdrAgent.id))
+      // innerJoin (não left) pra garantir que só métricas de agentes do tenant atual aparecem.
+      .innerJoin(sdrAgent, and(eq(sdrMetricSnapshot.agentId, sdrAgent.id), eq(sdrAgent.tenantId, tenantCtx.tenantId)))
       .orderBy(desc(sdrMetricSnapshot.periodStart)),
   ]);
 
