@@ -47,6 +47,18 @@ export const kanbanTask = pgTable(
     order: integer("order").notNull().default(0),
     whatsappSent: boolean("whatsapp_sent").notNull().default(false),
     googleCalendarEventId: text("google_calendar_event_id"),
+    // ── Alt 04 (tarefa com hora/lembrete/recorrência) ──────────────────────
+    // dueDate (DATE acima) é mantido como projeção (UI antiga, Calendar, cron
+    // legado). dueAt é a fonte da HORA exata. reminderAt = quando notificar.
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    reminderAt: timestamp("reminder_at", { withTimezone: true }),
+    recurrenceEveryDays: integer("recurrence_every_days"), // null = não recorrente
+    recurrenceUntil: timestamp("recurrence_until", { withTimezone: true }),
+    // Quem gerou a tarefa (automação stage_enter → step create_task). Sem
+    // .references() de propósito: evita ciclo de import kanban↔automations; a
+    // FK é criada pelo scripts/apply-stage-task-dedup-index.ts.
+    sourceAutomationId: uuid("source_automation_id"),
+    sourceStepId: uuid("source_step_id"),
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id),
@@ -57,6 +69,7 @@ export const kanbanTask = pgTable(
     index("idx_kanban_assigned").on(table.assignedTo),
     index("idx_kanban_due_date").on(table.dueDate),
     index("idx_kanban_column").on(table.columnId),
+    index("idx_kanban_reminder_at").on(table.reminderAt),
   ]
 );
 

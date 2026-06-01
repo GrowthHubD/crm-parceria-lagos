@@ -26,8 +26,10 @@ import { db } from "../db";
 import { automation, automationStep, automationLog } from "../db/schema/automations";
 import { lead, leadTagAssignment } from "../db/schema/pipeline";
 import { crmConversation, crmMessage, whatsappNumber } from "../db/schema/crm";
+import { kanbanTask, kanbanColumn } from "../db/schema/kanban";
 import { eq, and, lte, gte, asc, gt, isNull, isNotNull, or, inArray, sql as sqlOp } from "drizzle-orm";
 import { sendText } from "../whatsapp";
+import { computeTaskSchedule, type CreateTaskStepConfig } from "../tasks/schedule";
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -492,14 +494,27 @@ export async function processPendingAutomations(
       continue; // outro processo pegou primeiro
     }
 
-    // Resolve o step ATUAL da automação (o mais antigo por order — welcome/follow-up tem só 1)
-    // Assim sempre usamos a versão LIVE editada no painel, não a snapshot do momento do schedule.
-    const [step] = await db
-      .select()
-      .from(automationStep)
-      .where(eq(automationStep.automationId, auto.id))
-      .orderBy(asc(automationStep.order))
-      .limit(1);
+    // Resolve o step do log (sempre a versão LIVE). Usa log.stepId quando
+    // presente (fluxos multi-step: wait→create_task, etc); fallback pro 1º step
+    // por order (welcome/follow-up têm só 1). Antes pegava SEMPRE o 1º, o que
+    // quebrava qualquer automação com mais de um step.
+    let step = log.stepId
+      ? (
+          await db
+            .select()
+            .from(automationStep)
+            .where(eq(automationStep.id, log.stepId))
+            .limit(1)
+        )[0]
+      : undefined;
+    if (!step) {
+      [step] = await db
+        .select()
+        .from(automationStep)
+        .where(eq(automationStep.automationId, auto.id))
+        .orderBy(asc(automationStep.order))
+        .limit(1);
+    }
 
     if (!step) {
       await db
@@ -526,6 +541,7 @@ export async function processPendingAutomations(
           id: lead.id,
           name: lead.name,
           phone: lead.phone,
+          assignedTo: lead.assignedTo,
           convId: lead.crmConversationId,
           contactJid: crmConversation.contactJid,
           isGroup: crmConversation.isGroup,
@@ -534,6 +550,73 @@ export async function processPendingAutomations(
         .leftJoin(crmConversation, eq(crmConversation.id, lead.crmConversationId))
         .where(eq(lead.id, log.leadId))
         .limit(1);
+
+      // ── create_task (Alt 04): gera tarefa no kanban. Não precisa de telefone
+      //    nem de número WhatsApp — tratado ANTES do guard de phone abaixo.
+      if (step.type === "create_task") {
+        if (!leadRow) {
+          await db.update(automationLog).set({ status: "failed", executedAt: new Date(), error: "lead not found" }).where(eq(automationLog.id, log.id));
+          failed++;
+          continue;
+        }
+        const cfg = (step.config as CreateTaskStepConfig) ?? {};
+        const assignee = cfg.assigneeMode === "fixed_user" ? cfg.fixedUserId : leadRow.assignedTo;
+        if (!assignee) {
+          // assignedTo é NOT NULL — sem responsável não dá pra criar. Skip claro.
+          await db.update(automationLog).set({ status: "skipped", executedAt: new Date(), error: "create_task: lead sem responsável" }).where(eq(automationLog.id, log.id));
+          skipped++;
+          continue;
+        }
+        // Dedup: já existe tarefa ABERTA desta automação pra este lead? (idempotência
+        // ao reentrar na etapa — a recorrência gera a próxima ao concluir, não aqui.)
+        const [dupTask] = await db
+          .select({ id: kanbanTask.id })
+          .from(kanbanTask)
+          .where(and(eq(kanbanTask.leadId, leadRow.id), eq(kanbanTask.sourceAutomationId, auto.id), eq(kanbanTask.isCompleted, false)))
+          .limit(1);
+        if (dupTask) {
+          await db.update(automationLog).set({ status: "sent", executedAt: new Date(), error: "create_task: tarefa aberta já existe" }).where(eq(automationLog.id, log.id));
+          sent++;
+          continue;
+        }
+        let columnId = cfg.columnId;
+        if (!columnId) {
+          const [col] = await db.select({ id: kanbanColumn.id }).from(kanbanColumn).where(eq(kanbanColumn.tenantId, auto.tenantId)).orderBy(asc(kanbanColumn.order)).limit(1);
+          columnId = col?.id;
+        }
+        if (!columnId) {
+          await db.update(automationLog).set({ status: "failed", executedAt: new Date(), error: "create_task: tenant sem coluna kanban" }).where(eq(automationLog.id, log.id));
+          failed++;
+          continue;
+        }
+        const { dueAt, reminderAt, dueDate } = computeTaskSchedule(cfg);
+        const vars = { nome: leadRow.name ?? "", phone: leadRow.phone ?? "" };
+        const title = renderTemplate(cfg.titleTemplate || "Tarefa", vars) || "Tarefa";
+        const description = cfg.descriptionTemplate ? renderTemplate(cfg.descriptionTemplate, vars) : null;
+        const recur = cfg.recurEveryDays && cfg.recurEveryDays > 0 ? cfg.recurEveryDays : null;
+        const logIsDry = isDryRun() || log.dryRun === true;
+        if (!logIsDry) {
+          await db.insert(kanbanTask).values({
+            tenantId: auto.tenantId,
+            leadId: leadRow.id,
+            title,
+            description,
+            columnId,
+            assignedTo: assignee,
+            createdBy: assignee,
+            dueDate,
+            dueAt,
+            reminderAt,
+            priority: cfg.priority ?? "medium",
+            recurrenceEveryDays: recur,
+            sourceAutomationId: auto.id,
+            sourceStepId: step.id,
+          });
+        }
+        await db.update(automationLog).set({ status: "sent", executedAt: new Date() }).where(eq(automationLog.id, log.id));
+        sent++;
+        continue;
+      }
 
       if (!leadRow || !leadRow.phone) {
         await db

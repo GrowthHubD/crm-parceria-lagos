@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Plus, Loader2, Trash2, Clock, MessageSquare, Mail, GripVertical } from "lucide-react";
+import { X, Plus, Loader2, Trash2, Clock, MessageSquare, Mail, GripVertical, CheckSquare } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 
@@ -27,6 +27,7 @@ const STEP_TYPES = [
   { value: "send_whatsapp", label: "Enviar WhatsApp", icon: MessageSquare },
   { value: "wait", label: "Aguardar", icon: Clock },
   { value: "send_email", label: "Enviar Email", icon: Mail },
+  { value: "create_task", label: "Criar tarefa", icon: CheckSquare },
 ];
 
 export function AutomationEditor({ automationId, stages, onClose, onSaved }: AutomationEditorProps) {
@@ -66,7 +67,9 @@ export function AutomationEditor({ automationId, stages, onClose, onSaved }: Aut
         ? { delayMinutes: 60 }
         : type === "send_whatsapp"
           ? { message: "" }
-          : { subject: "", body: "" };
+          : type === "create_task"
+            ? { titleTemplate: "", priority: "medium", dueAfterDays: 0, dueTime: "", reminderMinutesBefore: 60, recurEveryDays: 0 }
+            : { subject: "", body: "" };
 
     setSteps((prev) => [...prev, { type, config: defaultConfig }]);
   };
@@ -277,6 +280,78 @@ export function AutomationEditor({ automationId, stages, onClose, onSaved }: Aut
                           rows={2}
                           className="w-full bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-foreground placeholder:text-muted focus:outline-none focus:border-primary resize-none"
                         />
+                      </div>
+                    )}
+
+                    {step.type === "create_task" && (
+                      <div className="space-y-2">
+                        <input
+                          value={(step.config.titleTemplate as string) ?? ""}
+                          onChange={(e) => updateStepConfig(idx, "titleTemplate", e.target.value)}
+                          placeholder="Título da tarefa — ex: Entrar em contato com {{nome}}"
+                          className="w-full bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="flex flex-col gap-1 text-[11px] text-muted">
+                            Prioridade
+                            <Select
+                              value={(step.config.priority as string) ?? "medium"}
+                              onChange={(v) => updateStepConfig(idx, "priority", v)}
+                              options={[
+                                { value: "low", label: "Baixa" },
+                                { value: "medium", label: "Média" },
+                                { value: "high", label: "Alta" },
+                                { value: "urgent", label: "Urgente" },
+                              ]}
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-[11px] text-muted">
+                            Vence em (dias)
+                            <input
+                              type="number"
+                              min={0}
+                              value={(step.config.dueAfterDays as number) ?? 0}
+                              onChange={(e) => updateStepConfig(idx, "dueAfterDays", Number(e.target.value))}
+                              className="bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-[11px] text-muted">
+                            Horário
+                            <input
+                              type="time"
+                              value={(step.config.dueTime as string) ?? ""}
+                              onChange={(e) => updateStepConfig(idx, "dueTime", e.target.value)}
+                              className="bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-[11px] text-muted">
+                            Lembrar antes
+                            <Select
+                              value={String((step.config.reminderMinutesBefore as number) ?? 60)}
+                              onChange={(v) => updateStepConfig(idx, "reminderMinutesBefore", Number(v))}
+                              options={[
+                                { value: "0", label: "Na hora" },
+                                { value: "15", label: "15 min antes" },
+                                { value: "30", label: "30 min antes" },
+                                { value: "60", label: "1 hora antes" },
+                                { value: "1440", label: "1 dia antes" },
+                              ]}
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-[11px] text-muted col-span-2">
+                            Repetir a cada (dias) — 0 = não repete; gera a próxima ao concluir
+                            <input
+                              type="number"
+                              min={0}
+                              value={(step.config.recurEveryDays as number) ?? 0}
+                              onChange={(e) => updateStepConfig(idx, "recurEveryDays", Number(e.target.value))}
+                              className="bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary"
+                            />
+                          </label>
+                        </div>
+                        <p className="text-[11px] text-muted/60">
+                          A tarefa vai pro responsável do lead, na primeira coluna do quadro de tarefas. Lembrete chega no sino.
+                        </p>
                       </div>
                     )}
                   </div>

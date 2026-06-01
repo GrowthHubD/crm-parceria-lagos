@@ -7,6 +7,7 @@ import { kanbanTask, kanbanColumn } from "@/lib/db/schema/kanban";
 import { userGoogleIntegration } from "@/lib/db/schema/users";
 import { and, eq } from "drizzle-orm";
 import { updateCalendarEvent, deleteCalendarEvent } from "@/lib/google-calendar";
+import { formatDateBRT } from "@/lib/tasks/schedule";
 import type { UserRole } from "@/types";
 
 const updateSchema = z.object({
@@ -76,6 +77,42 @@ export async function PATCH(
       .set(updates)
       .where(and(eq(kanbanTask.id, id), eq(kanbanTask.tenantId, ctx.tenantId)))
       .returning();
+
+    // ── Recorrência (Alt 04): ao CONCLUIR uma tarefa recorrente, gera a próxima
+    //    ocorrência (+N dias). Recorrência é propriedade da própria tarefa (não
+    //    re-dispara o trigger de etapa), evitando loop. Respeita recurrenceUntil.
+    if (d.isCompleted === true && updated.recurrenceEveryDays && updated.recurrenceEveryDays > 0) {
+      try {
+        const base = updated.dueAt ?? new Date();
+        const nextDueAt = new Date(base.getTime() + updated.recurrenceEveryDays * 86_400_000);
+        const withinLimit = !updated.recurrenceUntil || nextDueAt <= updated.recurrenceUntil;
+        if (withinLimit) {
+          const reminderLeadMs =
+            updated.reminderAt && updated.dueAt
+              ? updated.dueAt.getTime() - updated.reminderAt.getTime()
+              : null;
+          await db.insert(kanbanTask).values({
+            tenantId: updated.tenantId,
+            leadId: updated.leadId,
+            title: updated.title,
+            description: updated.description,
+            columnId: updated.columnId,
+            assignedTo: updated.assignedTo,
+            createdBy: updated.createdBy,
+            priority: updated.priority,
+            dueDate: formatDateBRT(nextDueAt),
+            dueAt: nextDueAt,
+            reminderAt: reminderLeadMs != null ? new Date(nextDueAt.getTime() - reminderLeadMs) : null,
+            recurrenceEveryDays: updated.recurrenceEveryDays,
+            recurrenceUntil: updated.recurrenceUntil,
+            sourceAutomationId: updated.sourceAutomationId,
+            sourceStepId: updated.sourceStepId,
+          });
+        }
+      } catch {
+        // best-effort — não falha o "concluir" da tarefa
+      }
+    }
 
     // Sync to Google Calendar (best-effort, only when title/dueDate/priority changed)
     const calendarRelevant = d.title !== undefined || d.dueDate !== undefined || d.priority !== undefined || d.description !== undefined;

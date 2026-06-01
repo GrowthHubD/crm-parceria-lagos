@@ -39,7 +39,7 @@ const createSchema = z.object({
   steps: z
     .array(
       z.object({
-        type: z.enum(["send_whatsapp", "wait", "send_email"]),
+        type: z.enum(["send_whatsapp", "wait", "send_email", "create_task"]),
         config: z.record(z.unknown()),
       })
     )

@@ -30,7 +30,7 @@ const updateSchema = z.object({
     .array(
       z.object({
         id: z.string().uuid().optional(),
-        type: z.enum(["send_whatsapp", "wait", "send_email"]),
+        type: z.enum(["send_whatsapp", "wait", "send_email", "create_task"]),
         config: z.record(z.unknown()),
       })
     )

@@ -147,13 +147,19 @@ export async function PATCH(
               continue;
             }
 
-            await db.insert(automationLog).values({
-              automationId: auto.id,
-              leadId: id,
-              stepId: step.id,
-              status: "pending",
-              scheduledAt: new Date(Date.now() + accumulatedDelay * 60 * 1000),
-            });
+            await db
+              .insert(automationLog)
+              .values({
+                automationId: auto.id,
+                leadId: id,
+                stepId: step.id,
+                // triggerType denormalizado → habilita o índice parcial
+                // uq_autolog_stage_task (idempotência ao reentrar na etapa).
+                triggerType: auto.triggerType,
+                status: "pending",
+                scheduledAt: new Date(Date.now() + accumulatedDelay * 60 * 1000),
+              })
+              .onConflictDoNothing();
           }
         }
       } catch {

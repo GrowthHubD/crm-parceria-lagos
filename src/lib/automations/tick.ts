@@ -17,6 +17,7 @@ import {
   runScheduledAutomations,
   processPendingAutomations,
 } from "./runner";
+import { processTaskReminders } from "../tasks/reminders";
 
 export interface TickResult {
   inactiveScheduled: number;
@@ -35,6 +36,8 @@ export async function runAutomationTick(): Promise<TickResult> {
   const inactive = await scheduleInactiveLeadFollowups({});
   const scheduled = await runScheduledAutomations({});
   const processed = await processPendingAutomations(500);
+  // Lembretes de tarefa (Alt 04) — best-effort, não derruba o tick.
+  await processTaskReminders(500).catch(() => {});
 
   return {
     inactiveScheduled: inactive.scheduled,
