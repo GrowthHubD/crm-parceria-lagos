@@ -561,11 +561,21 @@ export async function processPendingAutomations(
           continue;
         }
         const cfg = (step.config as CreateTaskStepConfig) ?? {};
-        // Assignee: fixedUser → responsável do lead → 1º user do tenant.
-        // O fallback é essencial: leads raramente têm responsável setado, então
-        // sem ele a tarefa nunca seria criada (assignedTo é NOT NULL).
-        let assignee =
-          (cfg.assigneeMode === "fixed_user" ? cfg.fixedUserId : null) ?? leadRow.assignedTo ?? null;
+        const logIsDry = isDryRun() || log.dryRun === true;
+        // Assignee: fixedUser (VALIDADO no tenant) → responsável do lead → 1º
+        // user do tenant. O fallback é essencial (leads raramente têm
+        // responsável; assignedTo é NOT NULL). fixedUserId vem do config cru →
+        // validar contra o tenant pra não atribuir tarefa cross-tenant.
+        let assignee: string | null = null;
+        if (cfg.assigneeMode === "fixed_user" && cfg.fixedUserId) {
+          const [valid] = await db
+            .select({ userId: userTenant.userId })
+            .from(userTenant)
+            .where(and(eq(userTenant.tenantId, auto.tenantId), eq(userTenant.userId, cfg.fixedUserId)))
+            .limit(1);
+          assignee = valid?.userId ?? null;
+        }
+        assignee = assignee ?? leadRow.assignedTo ?? null;
         if (!assignee) {
           const [u] = await db
             .select({ userId: userTenant.userId })
@@ -596,15 +606,16 @@ export async function processPendingAutomations(
           const [col] = await db.select({ id: kanbanColumn.id }).from(kanbanColumn).where(eq(kanbanColumn.tenantId, auto.tenantId)).orderBy(asc(kanbanColumn.order)).limit(1);
           columnId = col?.id;
         }
-        if (!columnId) {
+        if (!columnId && !logIsDry) {
           // Self-heal: tenant ainda sem quadro de tarefas → cria coluna padrão
-          // (igual ensureDefaultPipeline faz pro funil).
+          // (igual ensureDefaultPipeline faz pro funil). Pulado em dry-run pra
+          // não escrever fora de teste.
           const [newCol] = await db.insert(kanbanColumn).values({ tenantId: auto.tenantId, name: "A Fazer", order: 0 }).returning({ id: kanbanColumn.id });
           columnId = newCol?.id;
         }
         if (!columnId) {
-          await db.update(automationLog).set({ status: "failed", executedAt: new Date(), error: "create_task: falha ao resolver coluna" }).where(eq(automationLog.id, log.id));
-          failed++;
+          await db.update(automationLog).set({ status: "skipped", executedAt: new Date(), error: "create_task: tenant sem coluna kanban" }).where(eq(automationLog.id, log.id));
+          skipped++;
           continue;
         }
         const { dueAt, reminderAt, dueDate } = computeTaskSchedule(cfg);
@@ -612,7 +623,12 @@ export async function processPendingAutomations(
         const title = renderTemplate(cfg.titleTemplate || "Tarefa", vars) || "Tarefa";
         const description = cfg.descriptionTemplate ? renderTemplate(cfg.descriptionTemplate, vars) : null;
         const recur = cfg.recurEveryDays && cfg.recurEveryDays > 0 ? cfg.recurEveryDays : null;
-        const logIsDry = isDryRun() || log.dryRun === true;
+        // Teto opcional da recorrência: se recurMaxOccurrences > 0, deriva a data
+        // limite (recurrenceUntil) — senão null = sem teto (avança só ao concluir).
+        const recurUntil =
+          recur && cfg.recurMaxOccurrences && cfg.recurMaxOccurrences > 0
+            ? new Date(dueAt.getTime() + recur * cfg.recurMaxOccurrences * 86_400_000)
+            : null;
         if (!logIsDry) {
           await db.insert(kanbanTask).values({
             tenantId: auto.tenantId,
@@ -627,6 +643,7 @@ export async function processPendingAutomations(
             reminderAt,
             priority: cfg.priority ?? "medium",
             recurrenceEveryDays: recur,
+            recurrenceUntil: recurUntil,
             sourceAutomationId: auto.id,
             sourceStepId: step.id,
           });

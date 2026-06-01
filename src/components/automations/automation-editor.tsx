@@ -68,7 +68,7 @@ export function AutomationEditor({ automationId, stages, onClose, onSaved }: Aut
         : type === "send_whatsapp"
           ? { message: "" }
           : type === "create_task"
-            ? { titleTemplate: "", priority: "medium", dueAfterDays: 0, dueTime: "", reminderMinutesBefore: 60, recurEveryDays: 0 }
+            ? { titleTemplate: "", priority: "medium", dueAfterDays: 0, dueTime: "", reminderMinutesBefore: 60, recurEveryDays: 0, recurMaxOccurrences: 0 }
             : { subject: "", body: "" };
 
     setSteps((prev) => [...prev, { type, config: defaultConfig }]);
@@ -338,13 +338,23 @@ export function AutomationEditor({ automationId, stages, onClose, onSaved }: Aut
                               ]}
                             />
                           </label>
-                          <label className="flex flex-col gap-1 text-[11px] text-muted col-span-2">
-                            Repetir a cada (dias) — 0 = não repete; gera a próxima ao concluir
+                          <label className="flex flex-col gap-1 text-[11px] text-muted">
+                            Repetir a cada (dias) — 0 = não repete
                             <input
                               type="number"
                               min={0}
                               value={(step.config.recurEveryDays as number) ?? 0}
                               onChange={(e) => updateStepConfig(idx, "recurEveryDays", Number(e.target.value))}
+                              className="bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-[11px] text-muted">
+                            Máx. de repetições — 0 = sem limite
+                            <input
+                              type="number"
+                              min={0}
+                              value={(step.config.recurMaxOccurrences as number) ?? 0}
+                              onChange={(e) => updateStepConfig(idx, "recurMaxOccurrences", Number(e.target.value))}
                               className="bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary"
                             />
                           </label>

@@ -94,7 +94,9 @@ export async function GET(
         mediaUrl: crmMessage.mediaUrl,
       })
       .from(crmMessage)
-      .where(eq(crmMessage.id, msgId))
+      // conversationId = id: a mídia só é servida se a mensagem pertence à
+      // conversa autorizada (evita leitura cross-tenant de mídia via msgId solto).
+      .where(and(eq(crmMessage.id, msgId), eq(crmMessage.conversationId, id)))
       .limit(1);
 
     if (!msg) return NextResponse.json({ error: "Mensagem não encontrada" }, { status: 404 });

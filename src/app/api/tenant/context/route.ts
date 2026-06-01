@@ -155,8 +155,10 @@ export async function GET(_request: NextRequest) {
   // ── Override de tenant via cookie gh-tenant-override (switcher) ─────────
   // Sem isto, o gate sempre devolvia o tenant DEFAULT e a sidebar/switcher
   // divergiam do tenant que getTenantContext aplica nas rotas de dados após um
-  // switch. Mesma autorização do /api/tenant/switch (superadmin → qualquer;
-  // partner_admin → home + filhos). Best-effort: inválido/erro cai no default.
+  // switch. Autorização: superadmin → qualquer; partner_admin → home + filhos.
+  // O home prefere a row em tenant is_partner=true (mesmo critério do
+  // /api/tenant/switch) — senão um partner_admin com >1 vínculo poderia ter o
+  // override recusado aqui e a sidebar cair no default. Best-effort: cai no default.
   let effectiveRole: string = chosen.role;
   let effectiveTenant = chosen.tenant;
   try {
@@ -165,7 +167,9 @@ export async function GET(_request: NextRequest) {
       const verified = await verifyOverride(overrideToken, userId);
       if (verified) {
         const isSuper = rows.some((r) => r.role === "superadmin");
-        const partnerHome = rows.find((r) => r.role === "partner_admin")?.tenant?.id ?? null;
+        const partnerHome =
+          (rows.find((r) => r.role === "partner_admin" && r.tenant?.is_partner) ??
+            rows.find((r) => r.role === "partner_admin"))?.tenant?.id ?? null;
         const { data: tgt } = await admin
           .from("tenant")
           .select("id, slug, is_platform_owner, is_partner, partner_id")

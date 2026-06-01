@@ -136,7 +136,7 @@ export async function POST(
       );
     }
 
-    const [msg] = await db
+    let [msg] = await db
       .insert(crmMessage)
       .values({
         conversationId: id,
@@ -148,7 +148,18 @@ export async function POST(
         quotedMessageId: quoted?.key.id ?? null,
         quotedContent,
       })
+      .onConflictDoNothing()
       .returning();
+    // Corrida: se o webhook (fromMe) inseriu a MESMA mensagem primeiro, o
+    // onConflict não retorna linha. Busca a existente pra (a) não estourar a
+    // unique → 500 fantasma e (b) não pular o avanço de etapa do lead abaixo.
+    if (!msg && result.messageId) {
+      [msg] = await db
+        .select()
+        .from(crmMessage)
+        .where(and(eq(crmMessage.conversationId, id), eq(crmMessage.messageIdWa, result.messageId)))
+        .limit(1);
+    }
 
     await db
       .update(crmConversation)

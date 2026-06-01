@@ -81,7 +81,15 @@ export async function PATCH(
     // ── Recorrência (Alt 04): ao CONCLUIR uma tarefa recorrente, gera a próxima
     //    ocorrência (+N dias). Recorrência é propriedade da própria tarefa (não
     //    re-dispara o trigger de etapa), evitando loop. Respeita recurrenceUntil.
-    if (d.isCompleted === true && updated.recurrenceEveryDays && updated.recurrenceEveryDays > 0) {
+    // Só gera a próxima na BORDA de conclusão (aberta→concluída). Sem o
+    // `existing.isCompleted === false`, um re-PATCH/double-click com
+    // isCompleted:true numa tarefa já concluída criava outra ocorrência.
+    if (
+      existing.isCompleted === false &&
+      d.isCompleted === true &&
+      updated.recurrenceEveryDays &&
+      updated.recurrenceEveryDays > 0
+    ) {
       try {
         const base = updated.dueAt ?? new Date();
         const nextDueAt = new Date(base.getTime() + updated.recurrenceEveryDays * 86_400_000);

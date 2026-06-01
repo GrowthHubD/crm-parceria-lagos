@@ -7,8 +7,9 @@ import {
   integer,
   jsonb,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import { tenant } from "./tenants";
 import { lead } from "./pipeline";
 
@@ -110,6 +111,12 @@ export const automationLog = pgTable(
   (table) => [
     index("idx_automation_log_status").on(table.status, table.scheduledAt),
     index("idx_automation_log_automation").on(table.automationId),
+    // Idempotência do stage_enter: 1 log por (automation, lead, step) — impede
+    // re-disparo ao reentrar na etapa. Também aplicado por script (apply-stage-
+    // task-dedup-index.ts) pra DBs já existentes; aqui pra db:push/DB novo.
+    uniqueIndex("uq_autolog_stage_task")
+      .on(table.automationId, table.leadId, table.stepId)
+      .where(sql`${table.triggerType} = 'stage_enter'`),
   ]
 );
 

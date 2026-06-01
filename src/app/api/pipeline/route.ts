@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { pipeline, pipelineStage, lead, leadTag, leadTagAssignment } from "@/lib/db/schema/pipeline";
 import { crmConversation, crmMessage } from "@/lib/db/schema/crm";
 import { user, userTenant } from "@/lib/db/schema/users";
-import { eq, asc, desc, and } from "drizzle-orm";
+import { eq, asc, desc, and, inArray } from "drizzle-orm";
 import { getTenantContext } from "@/lib/tenant";
 import { getNextFollowUpBatch } from "@/lib/automations/chain-preview";
 import type { UserRole } from "@/types";
@@ -65,9 +65,15 @@ export async function GET(request: NextRequest) {
         .from(lead)
         .leftJoin(user, eq(lead.assignedTo, user.id))
         .leftJoin(crmConversation, eq(lead.crmConversationId, crmConversation.id))
-        // CRÍTICO: escopo de tenant. Sem isso a query retornava leads de TODOS
-        // os tenants (vazamento cross-tenant ao trocar de funil no client).
-        .where(eq(lead.tenantId, ctx.tenantId))
+        // CRÍTICO: escopo de tenant + FUNIL ativo. Sem o tenant havia vazamento
+        // cross-tenant; sem o funil, leads de outros funis trafegavam (invisíveis)
+        // e o contador do header contava errado com múltiplos funis.
+        .where(
+          and(
+            eq(lead.tenantId, ctx.tenantId),
+            inArray(lead.stageId, db.select({ id: pipelineStage.id }).from(pipelineStage).where(stageFilter))
+          )
+        )
         .orderBy(desc(lead.createdAt)),
       db
         .select({

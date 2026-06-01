@@ -8,7 +8,7 @@ import { db } from "@/lib/db";
 import { pipeline, pipelineStage, lead, leadTag, leadTagAssignment } from "@/lib/db/schema/pipeline";
 import { crmConversation } from "@/lib/db/schema/crm";
 import { user, userTenant } from "@/lib/db/schema/users";
-import { eq, asc, desc, and } from "drizzle-orm";
+import { eq, asc, desc, and, inArray } from "drizzle-orm";
 import { KanbanBoard } from "@/components/pipeline/kanban-board";
 import type { UserRole } from "@/types";
 
@@ -71,7 +71,15 @@ export default async function PipelinePage() {
         contactProfilePicUrl: crmConversation.contactProfilePicUrl,
       })
       .from(lead)
-      .where(eq(lead.tenantId, tenantCtx.tenantId))
+      // Escopa leads ao FUNIL ativo (stages do pipeline), não só ao tenant —
+      // senão leads de outros funis trafegam no payload (invisíveis) e o contador
+      // do header conta errado com múltiplos funis.
+      .where(
+        and(
+          eq(lead.tenantId, tenantCtx.tenantId),
+          inArray(lead.stageId, db.select({ id: pipelineStage.id }).from(pipelineStage).where(stageFilter))
+        )
+      )
       .leftJoin(user, eq(lead.assignedTo, user.id))
       .leftJoin(crmConversation, eq(lead.crmConversationId, crmConversation.id))
       .orderBy(desc(lead.createdAt)),

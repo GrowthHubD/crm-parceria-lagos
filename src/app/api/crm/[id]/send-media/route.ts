@@ -143,7 +143,7 @@ export async function POST(
       );
     }
 
-    const [msg] = await db
+    let [msg] = await db
       .insert(crmMessage)
       .values({
         conversationId: id,
@@ -155,7 +155,16 @@ export async function POST(
         content: isAudio || isImage || isVideo ? null : (fileName ?? null),
         status: "sent",
       })
+      .onConflictDoNothing()
       .returning();
+    // Corrida com o webhook (fromMe): se já inseriu a mesma msg, busca a existente.
+    if (!msg && result.messageId) {
+      [msg] = await db
+        .select()
+        .from(crmMessage)
+        .where(and(eq(crmMessage.conversationId, id), eq(crmMessage.messageIdWa, result.messageId)))
+        .limit(1);
+    }
 
     await db
       .update(crmConversation)

@@ -16,6 +16,7 @@ import { kanbanTask } from "../db/schema/kanban";
 import { lead } from "../db/schema/pipeline";
 import { notification } from "../db/schema/notifications";
 import { and, eq, lte, or, isNull, isNotNull } from "drizzle-orm";
+import { formatDateBRT } from "./schedule";
 
 export interface ReminderResult {
   scanned: number;
@@ -25,8 +26,10 @@ export interface ReminderResult {
 
 export async function processTaskReminders(limit = 500): Promise<ReminderResult> {
   const now = new Date();
-  const tomorrowStr = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const todayStr = now.toISOString().slice(0, 10);
+  // Dias-parede em BRT (igual ao dueDate gravado pelo Alt 04) — sem isto, entre
+  // 21h-23h59 BRT a data UTC já virou e o rótulo "vence hoje/amanhã" saía errado.
+  const tomorrowStr = formatDateBRT(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  const todayStr = formatDateBRT(now);
 
   const dueTasks = await db
     .select({

@@ -8,7 +8,7 @@ import {
   date,
   index,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import { user } from "./users";
 import { tenant } from "./tenants";
 import { lead } from "./pipeline";
@@ -70,6 +70,19 @@ export const kanbanTask = pgTable(
     index("idx_kanban_due_date").on(table.dueDate),
     index("idx_kanban_column").on(table.columnId),
     index("idx_kanban_reminder_at").on(table.reminderAt),
+    // Índices PARCIAIS (só tarefas abertas) pros hot paths do Alt 04:
+    // - dedup do create_task (runner): (source_automation_id, lead_id)
+    // - lembrete por reminderAt e legado por dueDate (cron de 1 min)
+    // Aplicados também por script (apply-review-fix-indexes.ts) pra DB existente.
+    index("idx_kanban_source_auto")
+      .on(table.sourceAutomationId, table.leadId)
+      .where(sql`is_completed = false`),
+    index("idx_kanban_reminder_open")
+      .on(table.reminderAt)
+      .where(sql`is_completed = false AND reminder_at IS NOT NULL`),
+    index("idx_kanban_due_open")
+      .on(table.dueDate)
+      .where(sql`is_completed = false AND reminder_at IS NULL AND due_date IS NOT NULL`),
   ]
 );
 

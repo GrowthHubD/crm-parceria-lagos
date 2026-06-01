@@ -83,10 +83,12 @@ export async function getVisibleTenants(
       .where(or(eq(tenant.id, ctx.tenantId), eq(tenant.partnerId, ctx.tenantId)))
       .orderBy(asc(tenant.name));
   }
-  return db
-    .select({ id: tenant.id, name: tenant.name, slug: tenant.slug })
-    .from(tenant)
-    .where(eq(tenant.id, ctx.tenantId));
+  // Usuário não-elevado vê APENAS o próprio tenant — retorna em memória, sem
+  // round-trip ao banco (o branch antigo era um SELECT cujo resultado só podia
+  // ser [ctx.tenantId]). Corta 1 query por request no hot path do CRM, já que
+  // getVisibleTenantIds roda em toda rota de conversa. `name` = slug é
+  // suficiente (a lista só vira dropdown quando há >1 tenant, i.e. elevado).
+  return [{ id: ctx.tenantId, name: ctx.tenantSlug, slug: ctx.tenantSlug }];
 }
 
 /** Conveniência: só os ids dos tenants visíveis (para `inArray` em WHERE). */

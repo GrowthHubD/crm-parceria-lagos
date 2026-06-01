@@ -27,12 +27,17 @@ export async function PATCH(
 
     const body = await request.json();
 
+    // Amarra a mensagem à conversa já autorizada (conversationId = id). Sem
+    // isso, um platform owner podia passar um msgId de OUTRO tenant e alterar
+    // isStarred de mensagem alheia (a conversa `id` é validada, mas msgId era
+    // independente). Mesmo escopo que o DELETE abaixo já usa.
     const [updated] = await db
       .update(crmMessage)
       .set({ ...(typeof body.isStarred === "boolean" ? { isStarred: body.isStarred } : {}) })
-      .where(eq(crmMessage.id, msgId))
+      .where(and(eq(crmMessage.id, msgId), eq(crmMessage.conversationId, id)))
       .returning();
 
+    if (!updated) return NextResponse.json({ error: "Mensagem não encontrada" }, { status: 404 });
     return NextResponse.json({ message: updated });
   } catch (e) {
     return handleApiError(e, "CRM PATCH message");

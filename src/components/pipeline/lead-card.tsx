@@ -175,10 +175,11 @@ export function LeadCard({ lead, onEdit, onDelete, onOpenConversation, canEdit, 
           </div>
         </div>
 
-        {/* Botão abrir conversa — visível sempre que houver conversa vinculada
-            (independe de ter lastMessage no SSR). Reusa o ConversationPopup do
-            kanban-board via onOpenConversation. stopPropagation pra não arrastar. */}
-        {lead.crmConversationId && onOpenConversation && (
+        {/* Botão abrir conversa — fallback do SSR (quando ainda não há preview
+            de última mensagem). Quando lastMessage existe, a própria linha de
+            preview já é clicável e abre a conversa, então escondemos o botão pra
+            não duplicar o ícone. */}
+        {lead.crmConversationId && onOpenConversation && !lead.lastMessage && (
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -230,6 +231,7 @@ export function LeadCard({ lead, onEdit, onDelete, onOpenConversation, canEdit, 
 }
 
 function Avatar({ name, picUrl }: { name: string; picUrl: string | null | undefined }) {
+  const [errored, setErrored] = useState(false);
   const initials = name
     .split(/\s+/)
     .filter(Boolean)
@@ -237,15 +239,19 @@ function Avatar({ name, picUrl }: { name: string; picUrl: string | null | undefi
     .map((s) => s[0]?.toUpperCase() ?? "")
     .join("") || "?";
 
-  // contactProfilePicUrl pode ser: null, "none" (quando webhook não achou foto),
-  // ou uma URL http(s). Só renderiza como imagem se começar com http.
-  if (picUrl && picUrl.startsWith("http")) {
+  // contactProfilePicUrl pode ser: null, "none" (webhook não achou foto), ou
+  // URL http(s). Usa <img> (lazy + onError) em vez de background-image: fotos
+  // do WhatsApp expiram, e aí caímos graciosamente nas iniciais (em vez de um
+  // círculo cinza vazio).
+  if (picUrl && picUrl.startsWith("http") && !errored) {
     return (
-      <div
-        role="img"
-        aria-label={name}
-        className="w-9 h-9 rounded-full shrink-0 bg-surface-2 bg-cover bg-center"
-        style={{ backgroundImage: `url("${picUrl}")` }}
+      <img
+        src={picUrl}
+        alt={name}
+        loading="lazy"
+        decoding="async"
+        onError={() => setErrored(true)}
+        className="w-9 h-9 rounded-full object-cover bg-surface-2 shrink-0"
       />
     );
   }

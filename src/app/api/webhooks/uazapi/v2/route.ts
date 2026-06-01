@@ -420,13 +420,18 @@ export async function POST(request: NextRequest) {
     if (!msg || !chat) return NextResponse.json({ ok: true });
 
     // Filtros básicos. fromMe = mensagem ENVIADA (do celular ou pela API).
-    // - wasSentByApi: já gravada pelo /api/crm/[id]/send → ignora (evita
-    //   duplicar; a Uazapi também exclui via excludeMessages, defesa extra).
-    // - fromMe sem wasSentByApi: enviada do celular → captura como outgoing.
-    //   (Antes: `if (msg.fromMe) return` dropava TUDO que era enviado → as
-    //   respostas do dono pelo app nunca apareciam no CRM.)
-    const isOutgoing = msg.fromMe === true;
-    if (isOutgoing && msg.wasSentByApi) return NextResponse.json({ ok: true });
+    // - Sem excludeMessages no /webhook/set: o webhook RECEBE o que sai pela
+    //   API; o skip de wasSentByApi + o onConflictDoNothing no insert (dedup por
+    //   conversation_id+message_id_wa) é que evitam duplicar as do /send.
+    // - `messages_update` é ack de status (delivered/read) — fromMe SEM conteúdo;
+    //   processá-lo criava conversa/lead fantasma "sem nome". Outgoing REAL só
+    //   vem no evento `messages`.
+    // - fromMe sem wasSentByApi no evento `messages` → enviada do celular →
+    //   captura como outgoing (antes `if (msg.fromMe) return` dropava tudo).
+    const isOutgoing = event === "messages" && msg.fromMe === true;
+    if (msg.fromMe === true && (msg.wasSentByApi || event === "messages_update")) {
+      return NextResponse.json({ ok: true });
+    }
 
     const isGroup = msg.isGroup === true || chat.wa_isGroup === true;
     if (isGroup) return NextResponse.json({ ok: true });
