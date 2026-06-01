@@ -66,6 +66,9 @@ export default async function PipelinePage() {
         // Para filtro compartilhado: classificação vem da conversa vinculada.
         crmConversationId: lead.crmConversationId,
         classification: crmConversation.classification,
+        // Foto do contato (mesma fonte do CRM) — pro avatar do card. Sem isto o
+        // card carregava sem foto no SSR (a /api/pipeline já trazia no refetch).
+        contactProfilePicUrl: crmConversation.contactProfilePicUrl,
       })
       .from(lead)
       .where(eq(lead.tenantId, tenantCtx.tenantId))

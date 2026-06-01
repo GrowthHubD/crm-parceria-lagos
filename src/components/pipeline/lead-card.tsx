@@ -175,6 +175,23 @@ export function LeadCard({ lead, onEdit, onDelete, onOpenConversation, canEdit, 
           </div>
         </div>
 
+        {/* Botão abrir conversa — visível sempre que houver conversa vinculada
+            (independe de ter lastMessage no SSR). Reusa o ConversationPopup do
+            kanban-board via onOpenConversation. stopPropagation pra não arrastar. */}
+        {lead.crmConversationId && onOpenConversation && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (lead.crmConversationId) onOpenConversation(lead.crmConversationId);
+            }}
+            className="p-1 rounded text-muted/40 hover:text-primary hover:bg-surface-2 transition-colors cursor-pointer shrink-0"
+            aria-label="Ver conversa"
+            title="Ver conversa"
+          >
+            <MessageCircle className="w-3.5 h-3.5" />
+          </button>
+        )}
+
         {/* ⋮ menu */}
         {(canEdit || canDelete) && (
           <div className="relative shrink-0" ref={menuRef}>
