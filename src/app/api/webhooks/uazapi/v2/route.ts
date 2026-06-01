@@ -70,6 +70,9 @@ interface UazapiV2Message {
   sender?: string;
   senderName?: string;
   source?: string;
+  // true quando a mensagem foi enviada pela API (nosso /send) — já está no
+  // banco, então o webhook deve ignorá-la pra não duplicar.
+  wasSentByApi?: boolean;
   text?: string;
   caption?: string;
   content?: UazapiV2Content;
@@ -416,8 +419,14 @@ export async function POST(request: NextRequest) {
     const chat = payload.chat;
     if (!msg || !chat) return NextResponse.json({ ok: true });
 
-    // Filtros básicos
-    if (msg.fromMe) return NextResponse.json({ ok: true });
+    // Filtros básicos. fromMe = mensagem ENVIADA (do celular ou pela API).
+    // - wasSentByApi: já gravada pelo /api/crm/[id]/send → ignora (evita
+    //   duplicar; a Uazapi também exclui via excludeMessages, defesa extra).
+    // - fromMe sem wasSentByApi: enviada do celular → captura como outgoing.
+    //   (Antes: `if (msg.fromMe) return` dropava TUDO que era enviado → as
+    //   respostas do dono pelo app nunca apareciam no CRM.)
+    const isOutgoing = msg.fromMe === true;
+    if (isOutgoing && msg.wasSentByApi) return NextResponse.json({ ok: true });
 
     const isGroup = msg.isGroup === true || chat.wa_isGroup === true;
     if (isGroup) return NextResponse.json({ ok: true });
@@ -487,8 +496,11 @@ export async function POST(request: NextRequest) {
         .update(crmConversation)
         .set({
           lastMessageAt: now,
-          lastIncomingAt: now,
-          unreadCount: existing[0].unreadCount + 1,
+          // Outgoing (enviada): atualiza lastOutgoingAt e NÃO mexe no unread.
+          // Incoming (recebida): atualiza lastIncomingAt e soma 1 no unread.
+          ...(isOutgoing
+            ? { lastOutgoingAt: now }
+            : { lastIncomingAt: now, unreadCount: existing[0].unreadCount + 1 }),
           // || preserva o nome bom quando a mensagem nova vem sem nome (não
           // sobrescreve com "" / null).
           contactPushName: pushName || existing[0].contactPushName,
@@ -512,8 +524,11 @@ export async function POST(request: NextRequest) {
           classification: "new",
           isGroup: false,
           lastMessageAt: now,
-          lastIncomingAt: now,
-          unreadCount: 1,
+          // Conversa iniciada por mensagem de saída (negócio mandou primeiro do
+          // celular): lastOutgoingAt + unread 0. Senão, incoming normal.
+          ...(isOutgoing
+            ? { lastOutgoingAt: now, unreadCount: 0 }
+            : { lastIncomingAt: now, unreadCount: 1 }),
         })
         .returning();
       conversationId = newConv.id;
@@ -532,7 +547,9 @@ export async function POST(request: NextRequest) {
         if (existing) {
           const wasNeverEngaged = existing.crmConversationId === null;
           await linkConversationToLead(existing.id, conversationId);
-          if (wasNeverEngaged) {
+          // Welcome só dispara em mensagem RECEBIDA (não quando o negócio mandou
+          // a primeira do celular).
+          if (wasNeverEngaged && !isOutgoing) {
             try {
               await triggerFirstMessage({
                 tenantId: wNum.tenantId,
@@ -566,7 +583,8 @@ export async function POST(request: NextRequest) {
             .onConflictDoNothing()
             .returning({ id: lead.id });
 
-          if (inserted.length > 0) {
+          // Welcome só em mensagem recebida (ver acima).
+          if (inserted.length > 0 && !isOutgoing) {
             const newLead = inserted[0];
             try {
               await triggerFirstMessage({
@@ -671,12 +689,12 @@ export async function POST(request: NextRequest) {
       .values({
         conversationId,
         messageIdWa: msg.messageid ?? msg.id ?? null,
-        direction: "incoming",
+        direction: isOutgoing ? "outgoing" : "incoming",
         content: contentText || null,
         mediaType,
         mediaUrl: finalMediaUrl,
-        status: "delivered",
-        senderName: chat.wa_name ?? pushName ?? null,
+        status: isOutgoing ? "sent" : "delivered",
+        senderName: isOutgoing ? null : (chat.wa_name ?? pushName ?? null),
         timestamp: ts,
       })
       .onConflictDoNothing();
