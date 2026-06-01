@@ -27,6 +27,7 @@ import { automation, automationStep, automationLog } from "../db/schema/automati
 import { lead, leadTagAssignment } from "../db/schema/pipeline";
 import { crmConversation, crmMessage, whatsappNumber } from "../db/schema/crm";
 import { kanbanTask, kanbanColumn } from "../db/schema/kanban";
+import { userTenant } from "../db/schema/users";
 import { eq, and, lte, gte, asc, gt, isNull, isNotNull, or, inArray, sql as sqlOp } from "drizzle-orm";
 import { sendText } from "../whatsapp";
 import { computeTaskSchedule, type CreateTaskStepConfig } from "../tasks/schedule";
@@ -560,10 +561,21 @@ export async function processPendingAutomations(
           continue;
         }
         const cfg = (step.config as CreateTaskStepConfig) ?? {};
-        const assignee = cfg.assigneeMode === "fixed_user" ? cfg.fixedUserId : leadRow.assignedTo;
+        // Assignee: fixedUser → responsável do lead → 1º user do tenant.
+        // O fallback é essencial: leads raramente têm responsável setado, então
+        // sem ele a tarefa nunca seria criada (assignedTo é NOT NULL).
+        let assignee =
+          (cfg.assigneeMode === "fixed_user" ? cfg.fixedUserId : null) ?? leadRow.assignedTo ?? null;
         if (!assignee) {
-          // assignedTo é NOT NULL — sem responsável não dá pra criar. Skip claro.
-          await db.update(automationLog).set({ status: "skipped", executedAt: new Date(), error: "create_task: lead sem responsável" }).where(eq(automationLog.id, log.id));
+          const [u] = await db
+            .select({ userId: userTenant.userId })
+            .from(userTenant)
+            .where(eq(userTenant.tenantId, auto.tenantId))
+            .limit(1);
+          assignee = u?.userId ?? null;
+        }
+        if (!assignee) {
+          await db.update(automationLog).set({ status: "skipped", executedAt: new Date(), error: "create_task: tenant sem usuário pra atribuir" }).where(eq(automationLog.id, log.id));
           skipped++;
           continue;
         }
@@ -585,7 +597,13 @@ export async function processPendingAutomations(
           columnId = col?.id;
         }
         if (!columnId) {
-          await db.update(automationLog).set({ status: "failed", executedAt: new Date(), error: "create_task: tenant sem coluna kanban" }).where(eq(automationLog.id, log.id));
+          // Self-heal: tenant ainda sem quadro de tarefas → cria coluna padrão
+          // (igual ensureDefaultPipeline faz pro funil).
+          const [newCol] = await db.insert(kanbanColumn).values({ tenantId: auto.tenantId, name: "A Fazer", order: 0 }).returning({ id: kanbanColumn.id });
+          columnId = newCol?.id;
+        }
+        if (!columnId) {
+          await db.update(automationLog).set({ status: "failed", executedAt: new Date(), error: "create_task: falha ao resolver coluna" }).where(eq(automationLog.id, log.id));
           failed++;
           continue;
         }
