@@ -11,9 +11,11 @@
  * via HTTPS não tem esse problema.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getUserModules } from "@/lib/permissions";
+import { OVERRIDE_COOKIE_NAME, verifyOverride } from "@/lib/tenant-override";
 import type { UserRole } from "@/types";
 
 export async function GET(_request: NextRequest) {
@@ -150,9 +152,47 @@ export async function GET(_request: NextRequest) {
       .eq("id", chosen.id);
   }
 
+  // ── Override de tenant via cookie gh-tenant-override (switcher) ─────────
+  // Sem isto, o gate sempre devolvia o tenant DEFAULT e a sidebar/switcher
+  // divergiam do tenant que getTenantContext aplica nas rotas de dados após um
+  // switch. Mesma autorização do /api/tenant/switch (superadmin → qualquer;
+  // partner_admin → home + filhos). Best-effort: inválido/erro cai no default.
+  let effectiveRole: string = chosen.role;
+  let effectiveTenant = chosen.tenant;
+  try {
+    const overrideToken = (await cookies()).get(OVERRIDE_COOKIE_NAME)?.value;
+    if (overrideToken) {
+      const verified = await verifyOverride(overrideToken, userId);
+      if (verified) {
+        const isSuper = rows.some((r) => r.role === "superadmin");
+        const partnerHome = rows.find((r) => r.role === "partner_admin")?.tenant?.id ?? null;
+        const { data: tgt } = await admin
+          .from("tenant")
+          .select("id, slug, is_platform_owner, is_partner, partner_id")
+          .eq("id", verified.tenantId)
+          .maybeSingle();
+        const tt = tgt as
+          | { id: string; slug: string; is_platform_owner: boolean; is_partner: boolean; partner_id: string | null }
+          | null;
+        const allowed =
+          !!tt &&
+          (isSuper || (!!partnerHome && (tt.id === partnerHome || tt.partner_id === partnerHome)));
+        if (tt && allowed) {
+          effectiveTenant = {
+            id: tt.id,
+            slug: tt.slug,
+            is_platform_owner: tt.is_platform_owner,
+            is_partner: tt.is_partner,
+          };
+          effectiveRole = isSuper ? "superadmin" : "partner_admin";
+        }
+      }
+    }
+  } catch { /* override best-effort — cai no default */ }
+
   const utRow = {
-    role: chosen.role,
-    tenant: chosen.tenant,
+    role: effectiveRole,
+    tenant: effectiveTenant,
   };
 
   const t = utRow.tenant;

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getTenantContext } from "@/lib/tenant";
+import { getTenantContext, getVisibleTenantIds } from "@/lib/tenant";
 import { checkPermission } from "@/lib/permissions";
 import { handleApiError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { crmConversation, crmMessage, whatsappNumber } from "@/lib/db/schema/crm";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { sendMedia } from "@/lib/whatsapp";
 import { uploadWhatsappMedia } from "@/lib/supabase-storage";
 import type { UserRole } from "@/types";
@@ -34,15 +34,19 @@ export async function POST(
       return NextResponse.json({ error: "Dados inválidos" }, { status: 400 });
     }
 
+    // Autoriza contra os tenants visíveis (cross-tenant pra platform owner/
+    // superadmin; só o próprio pra user normal). 404 não vaza a conversa.
+    const visibleTenantIds = await getVisibleTenantIds(ctx);
     const [conv] = await db
       .select({
         id: crmConversation.id,
+        tenantId: crmConversation.tenantId,
         contactPhone: crmConversation.contactPhone,
         contactJid: crmConversation.contactJid,
         whatsappNumberId: crmConversation.whatsappNumberId,
       })
       .from(crmConversation)
-      .where(and(eq(crmConversation.id, id), eq(crmConversation.tenantId, ctx.tenantId)))
+      .where(and(eq(crmConversation.id, id), inArray(crmConversation.tenantId, visibleTenantIds)))
       .limit(1);
 
     if (!conv) return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
@@ -88,7 +92,7 @@ export async function POST(
     // (sem o parâmetro `codecs=opus`) pra bater com a allowlist do bucket.
     const storageMime = isAudio ? "audio/ogg" : mimetype;
     const uploaded = await uploadWhatsappMedia({
-      tenantId: ctx.tenantId,
+      tenantId: conv.tenantId,
       conversationId: id,
       data: file,
       mimetype: storageMime,

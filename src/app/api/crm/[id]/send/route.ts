@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getTenantContext } from "@/lib/tenant";
+import { getTenantContext, getVisibleTenantIds } from "@/lib/tenant";
 import { checkPermission } from "@/lib/permissions";
 import { handleApiError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { crmConversation, crmMessage, whatsappNumber } from "@/lib/db/schema/crm";
 import { lead, pipelineStage } from "@/lib/db/schema/pipeline";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 import { sendText } from "@/lib/whatsapp";
 import type { UserRole } from "@/types";
 
@@ -31,18 +31,21 @@ export async function POST(
       return NextResponse.json({ error: "Dados inválidos", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    // Filtro por tenantId é obrigatório — sem ele, qualquer user logado com
-    // UUID de conversa de outro tenant conseguiria enviar mensagem nesse
-    // contexto. Resposta é 404 (não 403) pra não vazar existência da conversa.
+    // Filtro por tenant é obrigatório — sem ele, qualquer user logado com UUID
+    // de conversa de outro tenant conseguiria enviar mensagem. Autoriza contra
+    // os tenants VISÍVEIS (platform owner/superadmin respondem cross-tenant;
+    // user normal = só o próprio). Resposta 404 (não 403) pra não vazar a conversa.
+    const visibleTenantIds = await getVisibleTenantIds(ctx);
     const [conv] = await db
       .select({
         id: crmConversation.id,
+        tenantId: crmConversation.tenantId,
         contactPhone: crmConversation.contactPhone,
         contactJid: crmConversation.contactJid,
         whatsappNumberId: crmConversation.whatsappNumberId,
       })
       .from(crmConversation)
-      .where(and(eq(crmConversation.id, id), eq(crmConversation.tenantId, ctx.tenantId)))
+      .where(and(eq(crmConversation.id, id), inArray(crmConversation.tenantId, visibleTenantIds)))
       .limit(1);
 
     if (!conv) return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
@@ -160,7 +163,7 @@ export async function POST(
       const [linkedLead] = await db
         .select({ id: lead.id, stageId: lead.stageId })
         .from(lead)
-        .where(and(eq(lead.crmConversationId, id), eq(lead.tenantId, ctx.tenantId)))
+        .where(and(eq(lead.crmConversationId, id), eq(lead.tenantId, conv.tenantId)))
         .limit(1);
 
       if (linkedLead) {
@@ -178,7 +181,7 @@ export async function POST(
             .where(
               and(
                 eq(pipelineStage.pipelineId, currentStage.pipelineId),
-                eq(pipelineStage.tenantId, ctx.tenantId)
+                eq(pipelineStage.tenantId, conv.tenantId)
               )
             )
             .orderBy(asc(pipelineStage.order))

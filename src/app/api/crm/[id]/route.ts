@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { checkPermission } from "@/lib/permissions";
-import { getTenantContext } from "@/lib/tenant";
+import { getTenantContext, getVisibleTenantIds } from "@/lib/tenant";
 import { handleApiError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { crmConversation, crmMessage, whatsappNumber } from "@/lib/db/schema/crm";
 import { lead, pipelineStage } from "@/lib/db/schema/pipeline";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 import { evolutionFetchProfilePicture } from "@/lib/evolution";
 import { getNextFollowUp } from "@/lib/automations/chain-preview";
 import type { UserRole } from "@/types";
@@ -28,11 +28,16 @@ export async function GET(
     const canView = await checkPermission(ctx.userId, ctx.role as UserRole, "crm", "view", ctx);
     if (!canView) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
-    // Validar que a conversation pertence ao tenant do user
+    // Autoriza contra TODOS os tenants visíveis (não só ctx.tenantId) — assim
+    // platform owner/superadmin abrem qualquer conversa que já veem na lista.
+    // Usuário normal: visibleTenantIds = [ctx.tenantId] → mesmo escopo de antes.
+    const visibleTenantIds = await getVisibleTenantIds(ctx);
+
+    // Validar que a conversation pertence a um tenant visível ao user
     let [conversation] = await db
       .select()
       .from(crmConversation)
-      .where(and(eq(crmConversation.id, id), eq(crmConversation.tenantId, ctx.tenantId)))
+      .where(and(eq(crmConversation.id, id), inArray(crmConversation.tenantId, visibleTenantIds)))
       .limit(1);
 
     if (!conversation) return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
@@ -93,13 +98,15 @@ export async function GET(
       .where(
         and(
           eq(lead.crmConversationId, id),
-          eq(lead.tenantId, ctx.tenantId)
+          // tenant da CONVERSA (não ctx.tenantId) — admin cross-tenant precisa
+          // do lead/follow-up do tenant dono da conversa.
+          eq(lead.tenantId, conversation.tenantId)
         )
       )
       .limit(1);
 
     const nextFollowUp = linkedLead
-      ? await getNextFollowUp({ tenantId: ctx.tenantId, leadId: linkedLead.id })
+      ? await getNextFollowUp({ tenantId: conversation.tenantId, leadId: linkedLead.id })
       : null;
 
     return NextResponse.json({
@@ -135,10 +142,11 @@ export async function PATCH(
     if (d.contactAlias !== undefined) updates.contactAlias = d.contactAlias;
     if (d.unreadCount !== undefined) updates.unreadCount = d.unreadCount;
 
+    const visibleTenantIds = await getVisibleTenantIds(ctx);
     const [updated] = await db
       .update(crmConversation)
       .set(updates)
-      .where(and(eq(crmConversation.id, id), eq(crmConversation.tenantId, ctx.tenantId)))
+      .where(and(eq(crmConversation.id, id), inArray(crmConversation.tenantId, visibleTenantIds)))
       .returning();
 
     if (!updated) return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });

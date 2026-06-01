@@ -8,7 +8,7 @@
  * Requer permissão de edição em CRM.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { getTenantContext } from "@/lib/tenant";
+import { getTenantContext, getVisibleTenantIds } from "@/lib/tenant";
 import { checkPermission } from "@/lib/permissions";
 import { handleApiError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
@@ -28,13 +28,14 @@ export async function DELETE(
     const canEdit = await checkPermission(ctx.userId, ctx.role as UserRole, "crm", "edit", ctx);
     if (!canEdit) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
+    const visibleTenantIds = await getVisibleTenantIds(ctx);
     const [conv] = await db
       .select({ id: crmConversation.id, phone: crmConversation.contactPhone, tenantId: crmConversation.tenantId })
       .from(crmConversation)
       .where(eq(crmConversation.id, id))
       .limit(1);
 
-    if (!conv || conv.tenantId !== ctx.tenantId) {
+    if (!conv || !visibleTenantIds.includes(conv.tenantId)) {
       return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
     }
 

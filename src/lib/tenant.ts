@@ -1,4 +1,4 @@
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, or, asc } from "drizzle-orm";
 import { auth } from "./auth";
 import { db } from "./db";
 import { user, userTenant } from "./db/schema/users";
@@ -50,6 +50,48 @@ export function canManagePartnerClients(ctx: TenantContext): boolean {
   if (ctx.role === "superadmin" || ctx.role === "partner_admin") return true;
   if (ctx.role === "manager" && (ctx.isPartner || ctx.isPlatformOwner)) return true;
   return false;
+}
+
+/**
+ * Tenants que este contexto pode VER/operar — fonte única da regra de
+ * visibilidade cross-tenant. Antes estava duplicada em /crm/page.tsx e
+ * /api/crm/route.ts, e as rotas de conversa individual NÃO usavam (filtravam
+ * só por ctx.tenantId), causando 404 ao platform owner abrir conversa de
+ * outro tenant que aparecia na lista. Centralizar evita essa divergência.
+ *
+ *   - platform owner (GH)        → todos os tenants ativos (inbox cross-tenant)
+ *   - superadmin / admin         → o próprio + filhos (partnerId = self)
+ *   - demais (operator/manager/…)→ apenas o próprio tenant
+ *
+ * Para usuários normais o resultado é `[ctx.tenantId]` — comportamento idêntico
+ * ao escopo singular anterior, sem regressão/escalonamento.
+ */
+export async function getVisibleTenants(
+  ctx: TenantContext
+): Promise<{ id: string; name: string; slug: string }[]> {
+  if (ctx.isPlatformOwner) {
+    return db
+      .select({ id: tenant.id, name: tenant.name, slug: tenant.slug })
+      .from(tenant)
+      .where(eq(tenant.status, "active"))
+      .orderBy(asc(tenant.name));
+  }
+  if (ctx.role === "superadmin" || ctx.role === "admin") {
+    return db
+      .select({ id: tenant.id, name: tenant.name, slug: tenant.slug })
+      .from(tenant)
+      .where(or(eq(tenant.id, ctx.tenantId), eq(tenant.partnerId, ctx.tenantId)))
+      .orderBy(asc(tenant.name));
+  }
+  return db
+    .select({ id: tenant.id, name: tenant.name, slug: tenant.slug })
+    .from(tenant)
+    .where(eq(tenant.id, ctx.tenantId));
+}
+
+/** Conveniência: só os ids dos tenants visíveis (para `inArray` em WHERE). */
+export async function getVisibleTenantIds(ctx: TenantContext): Promise<string[]> {
+  return (await getVisibleTenants(ctx)).map((t) => t.id);
 }
 
 // Bypass de auth pra dev local. Exige duas condições — NODE_ENV=development

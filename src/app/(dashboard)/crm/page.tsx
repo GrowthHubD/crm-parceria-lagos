@@ -3,12 +3,11 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/auth-server";
 import { checkPermission } from "@/lib/permissions";
-import { getTenantContext } from "@/lib/tenant";
+import { getTenantContext, getVisibleTenants } from "@/lib/tenant";
 import { db } from "@/lib/db";
 import { crmConversation, whatsappNumber } from "@/lib/db/schema/crm";
 import { pipeline, pipelineStage, leadTag } from "@/lib/db/schema/pipeline";
-import { tenant } from "@/lib/db/schema/tenants";
-import { and, eq, desc, asc, inArray, or } from "drizzle-orm";
+import { and, eq, desc, asc, inArray } from "drizzle-orm";
 import { Inbox } from "@/components/crm/inbox";
 import type { UserRole } from "@/types";
 
@@ -39,27 +38,7 @@ export default async function CrmPage() {
     redirect("/login");
   }
 
-  const visibleTenants = await (async () => {
-    if (tenantCtx.isPlatformOwner) {
-      return db
-        .select({ id: tenant.id, name: tenant.name, slug: tenant.slug })
-        .from(tenant)
-        .where(eq(tenant.status, "active"))
-        .orderBy(asc(tenant.name));
-    }
-    if (tenantCtx.role === "superadmin" || tenantCtx.role === "admin") {
-      return db
-        .select({ id: tenant.id, name: tenant.name, slug: tenant.slug })
-        .from(tenant)
-        .where(or(eq(tenant.id, tenantCtx.tenantId), eq(tenant.partnerId, tenantCtx.tenantId)))
-        .orderBy(asc(tenant.name));
-    }
-    return db
-      .select({ id: tenant.id, name: tenant.name, slug: tenant.slug })
-      .from(tenant)
-      .where(eq(tenant.id, tenantCtx.tenantId));
-  })();
-
+  const visibleTenants = await getVisibleTenants(tenantCtx);
   const visibleTenantIds = visibleTenants.map((t) => t.id);
   const tenantNameById = new Map(visibleTenants.map((t) => [t.id, t.name]));
 

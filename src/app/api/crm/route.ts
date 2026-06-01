@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkPermission } from "@/lib/permissions";
-import { getTenantContext } from "@/lib/tenant";
+import { getTenantContext, getVisibleTenants } from "@/lib/tenant";
 import { handleApiError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { crmConversation, crmMessage, whatsappNumber } from "@/lib/db/schema/crm";
 import { lead, leadTagAssignment, pipelineStage } from "@/lib/db/schema/pipeline";
-import { tenant } from "@/lib/db/schema/tenants";
-import { eq, and, desc, inArray, or, sql } from "drizzle-orm";
+import { eq, and, desc, inArray, sql } from "drizzle-orm";
 import type { UserRole } from "@/types";
 
 /**
@@ -40,25 +39,9 @@ export async function GET(request: NextRequest) {
     const pipelineId = searchParams.get("pipelineId");
     const tenantFilter = searchParams.get("tenantId");
 
-    // ── Tenants visíveis para este user (mesma regra do SSR em /crm/page.tsx)
-    const visibleTenants = await (async () => {
-      if (ctx.isPlatformOwner) {
-        return db
-          .select({ id: tenant.id, name: tenant.name })
-          .from(tenant)
-          .where(eq(tenant.status, "active"));
-      }
-      if (ctx.role === "superadmin" || ctx.role === "admin") {
-        return db
-          .select({ id: tenant.id, name: tenant.name })
-          .from(tenant)
-          .where(or(eq(tenant.id, ctx.tenantId), eq(tenant.partnerId, ctx.tenantId)));
-      }
-      return db
-        .select({ id: tenant.id, name: tenant.name })
-        .from(tenant)
-        .where(eq(tenant.id, ctx.tenantId));
-    })();
+    // ── Tenants visíveis para este user (helper compartilhado — mesma regra
+    //    do SSR em /crm/page.tsx e das rotas de conversa individual).
+    const visibleTenants = await getVisibleTenants(ctx);
     const visibleTenantIds = visibleTenants.map((t) => t.id);
     const tenantNameById = new Map(visibleTenants.map((t) => [t.id, t.name]));
 

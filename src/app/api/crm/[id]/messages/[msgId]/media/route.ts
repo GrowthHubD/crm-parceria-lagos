@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTenantContext } from "@/lib/tenant";
+import { getTenantContext, getVisibleTenantIds } from "@/lib/tenant";
 import { checkPermission } from "@/lib/permissions";
 import { handleApiError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { crmConversation, crmMessage } from "@/lib/db/schema/crm";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import type { UserRole } from "@/types";
 
 const MIME_MAP: Record<string, string> = {
@@ -73,6 +73,7 @@ export async function GET(
     const canView = await checkPermission(ctx.userId, ctx.role as UserRole, "crm", "view", ctx);
     if (!canView) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
+    const visibleTenantIds = await getVisibleTenantIds(ctx);
     const [conv] = await db
       .select({
         contactJid: crmConversation.contactJid,
@@ -80,7 +81,7 @@ export async function GET(
         whatsappNumberId: crmConversation.whatsappNumberId,
       })
       .from(crmConversation)
-      .where(and(eq(crmConversation.id, id), eq(crmConversation.tenantId, ctx.tenantId)))
+      .where(and(eq(crmConversation.id, id), inArray(crmConversation.tenantId, visibleTenantIds)))
       .limit(1);
 
     if (!conv) return NextResponse.json({ error: "Conversa não encontrada" }, { status: 404 });
