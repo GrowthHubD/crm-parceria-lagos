@@ -78,7 +78,7 @@ export function KanbanColumn({
   const totalValue = leads.reduce((sum, l) => sum + (Number(l.estimatedValue) || 0), 0);
 
   return (
-    <div className="flex flex-col w-72 shrink-0">
+    <div className="flex flex-col w-72 shrink-0 h-full max-h-full">
       {/* Column header */}
       <div className="flex items-center justify-between mb-2.5">
         <div className="flex items-center gap-2 min-w-0">
@@ -138,7 +138,9 @@ export function KanbanColumn({
       <div
         ref={setNodeRef}
         className={cn(
-          "flex-1 flex flex-col gap-2 min-h-[120px] rounded-xl p-2 transition-colors",
+          // min-h-0 + overflow-y-auto = scroll vertical PRÓPRIO da coluna
+          // (independente das outras e da página). flex-1 ocupa a altura restante.
+          "flex-1 min-h-0 overflow-y-auto flex flex-col gap-2 rounded-xl p-2 transition-colors",
           "bg-surface-2/50 border border-border/60",
           isOver && "border-primary/60 bg-primary/5"
         )}

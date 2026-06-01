@@ -11,7 +11,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
-import { Plus, Tags, Columns, X, Trophy } from "lucide-react";
+import { Plus, Tags, Columns, X, Trophy, GitBranch } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Select } from "@/components/ui/select";
 import { KanbanColumn } from "./kanban-column";
@@ -289,6 +289,79 @@ function NewStageModal({ onClose, onCreated, pipelineId }: {
   );
 }
 
+// ── New Funnel Modal ─────────────────────────────────────────────────────────
+
+function NewFunnelModal({ onClose, onCreated }: {
+  onClose: () => void;
+  onCreated: (funnel: Funnel) => void;
+}) {
+  const [name, setName] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!name.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/pipeline/funnels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        onCreated(data.funnel);
+        onClose();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body?.error ?? "Erro ao criar funil");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-surface border border-border rounded-xl shadow-xl w-full max-w-sm mx-4 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold text-foreground">Novo Funil</h2>
+          <button onClick={onClose} className="p-1 rounded text-muted hover:text-foreground hover:bg-surface-2 transition-colors cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-muted mb-1 block">Nome do funil</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+              placeholder="Ex: Tráfego, Social Media"
+              className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
+            />
+            <p className="text-xs text-muted/60 mt-1.5">
+              Cria um funil novo com 4 etapas padrão (Novo, Em Andamento, Ganho, Perdido). Dá pra editar/adicionar etapas depois.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} className="flex-1 py-2 text-sm text-muted border border-border rounded-lg hover:bg-surface-2 transition-colors cursor-pointer">
+            Cancelar
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={loading || !name.trim()}
+            className="flex-1 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {loading ? "Criando..." : "Criar Funil"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Board ───────────────────────────────────────────────────────────────
 
 export function KanbanBoard({
@@ -321,6 +394,7 @@ export function KanbanBoard({
   const hasActiveFilter = !!(filters.tagId || filters.stageId || filters.classification);
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [newStageOpen, setNewStageOpen] = useState(false);
+  const [newFunnelOpen, setNewFunnelOpen] = useState(false);
   const wonStageId = stages.find((s) => s.isWon)?.id ?? "";
   const isDragging = useRef(false);
 
@@ -568,6 +642,13 @@ export function KanbanBoard({
               />
             </div>
             <button
+              onClick={() => setNewFunnelOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-sm text-muted hover:text-foreground hover:bg-surface-2 transition-colors cursor-pointer"
+            >
+              <GitBranch className="w-3.5 h-3.5" />
+              Novo Funil
+            </button>
+            <button
               onClick={() => setNewStageOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-sm text-muted hover:text-foreground hover:bg-surface-2 transition-colors cursor-pointer"
             >
@@ -618,8 +699,11 @@ export function KanbanBoard({
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
       >
-        <div className="overflow-x-auto pb-4 -mx-2 px-2">
-          <div className="flex gap-3 min-w-max">
+        {/* Board: altura limitada ao viewport → scroll horizontal das colunas
+            aqui, e cada coluna tem o próprio scroll vertical (não estica a
+            página inteira). min-h floor pra telas baixas. */}
+        <div className="overflow-x-auto overflow-y-hidden pb-2 -mx-2 px-2 h-[calc(100vh-15rem)] min-h-[320px]">
+          <div className="flex gap-3 min-w-max h-full">
             {stages.map((stage) => (
               <KanbanColumn
                 key={stage.id}
@@ -691,6 +775,16 @@ export function KanbanBoard({
           onClose={() => setNewStageOpen(false)}
           onCreated={(stage) => setStages((prev) => [...prev, stage])}
           pipelineId={activePipelineId}
+        />
+      )}
+
+      {newFunnelOpen && (
+        <NewFunnelModal
+          onClose={() => setNewFunnelOpen(false)}
+          onCreated={(funnel) => {
+            setFunnels((prev) => [...prev, funnel]);
+            handleSwitchFunnel(funnel.id);
+          }}
         />
       )}
 
