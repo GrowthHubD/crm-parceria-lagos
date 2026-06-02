@@ -64,9 +64,10 @@ export default async function CrmPage() {
       .leftJoin(whatsappNumber, eq(crmConversation.whatsappNumberId, whatsappNumber.id))
       .where(inArray(crmConversation.tenantId, visibleTenantIds))
       .orderBy(desc(crmConversation.lastMessageAt))
-      // SSR carrega só 30 conversas — resto/preview vem via /api/crm no mount.
-      // (Worker 1102 quando SSR processava 100+DISTINCT ON em crm_message.)
-      .limit(30),
+      // SSR carrega 100 conversas (skeleton) — preview/resto vem via /api/crm
+      // no mount. Sem DISTINCT ON aqui (preview é null no SSR), então 100 rows
+      // é select+leftJoin barato — o Worker 1102 antigo era o N+1 de DISTINCT ON.
+      .limit(100),
     db
       .select()
       .from(whatsappNumber)

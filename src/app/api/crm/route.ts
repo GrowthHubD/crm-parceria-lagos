@@ -107,9 +107,11 @@ export async function GET(request: NextRequest) {
     if (classification) whereConditions.push(eq(crmConversation.classification, classification));
     if (restrictToConvIds) whereConditions.push(inArray(crmConversation.id, restrictToConvIds));
 
-    // Paginação inicial: 50 conversas mais recentes. Em tenants com 500+ convs
+    // Paginação inicial: 200 conversas mais recentes. Em tenants com 500+ convs
     // (Lagos), carregar tudo era ~2-5s. Cursor-based paging (?before=<ts>) fica
     // pro Bloco 2 — agora só limita o blast radius do payload e do JSON parse.
+    // 200 cobre o backfill de chats do WhatsApp (scripts/backfill-chats-from-uazapi.ts);
+    // o preview é UMA query DISTINCT ON, então 200 IDs no IN continua barato.
     const conversations = await db
       .select({
         id: crmConversation.id,
@@ -132,7 +134,7 @@ export async function GET(request: NextRequest) {
       .leftJoin(whatsappNumber, eq(crmConversation.whatsappNumberId, whatsappNumber.id))
       .where(and(...whereConditions))
       .orderBy(desc(crmConversation.lastMessageAt))
-      .limit(50);
+      .limit(200);
 
     const numbers = await db
       .select()
